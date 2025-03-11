@@ -6,6 +6,7 @@ const MAP_WIDTH = 80;  // Actual map width
 const MAP_HEIGHT = 50; // Actual map height
 const FOV_RADIUS = 6; // How far the player can see
 const ANIMATION_SPEED = 200; // Milliseconds per frame
+const BASE_MONSTERS = 6; // Base number of monsters per level
 
 // Game class
 class GladelikeGame {
@@ -244,7 +245,8 @@ class GladelikeGame {
         // If no combat, proceed with movement
         if (this.isValidMove(newX, newY)) {
             // Check if new position has stairs
-            if (this.map[newY][newX] === 'stairs') {
+            const tile = this.map[newY][newX];
+            if (tile && tile.feature === 'stairsDown') {
                 this.goDownstairs();
                 return;
             }
@@ -451,6 +453,26 @@ class GladelikeGame {
         // Generate a basic cellular automata map using ROT.js
         const generator = new ROT.Map.Cellular(MAP_WIDTH, MAP_HEIGHT);
         
+        // Adjust map size based on level - early levels are smaller
+        let effectiveWidth = MAP_WIDTH;
+        let effectiveHeight = MAP_HEIGHT;
+        let marginX = 0;
+        let marginY = 0;
+        
+        if (this.currentLevel <= 3) {
+            // First 3 levels are smaller (60% of full size)
+            effectiveWidth = Math.floor(MAP_WIDTH * 0.6);
+            effectiveHeight = Math.floor(MAP_HEIGHT * 0.6);
+            marginX = Math.floor((MAP_WIDTH - effectiveWidth) / 2);
+            marginY = Math.floor((MAP_HEIGHT - effectiveHeight) / 2);
+        } else if (this.currentLevel <= 6) {
+            // Levels 4-6 are medium sized (80% of full size)
+            effectiveWidth = Math.floor(MAP_WIDTH * 0.8);
+            effectiveHeight = Math.floor(MAP_HEIGHT * 0.8);
+            marginX = Math.floor((MAP_WIDTH - effectiveWidth) / 2);
+            marginY = Math.floor((MAP_HEIGHT - effectiveHeight) / 2);
+        }
+        
         // Adjust randomization based on depth for variety
         const wallChance = 0.45 + (this.currentLevel * 0.01); // Slightly increase wall density with depth
         generator.randomize(wallChance);
@@ -460,111 +482,30 @@ class GladelikeGame {
             generator.create();
         }
         
-        // Create a temporary map to store the generated data
-        let tempMap = {};
-        
-        // Apply the generated map to the temporary storage
-        generator.create((x, y, value) => {
-            // value = 1 for floor, 0 for wall
-            const key = `${x},${y}`;
-            tempMap[key] = { 
-                x, 
-                y, 
-                isWall: !value 
-            };
-        });
-        
-        // Connect all non-wall sections
-        generator.connect((x, y, value) => {
-            const key = `${x},${y}`;
-            if (tempMap[key]) {
-                tempMap[key].isWall = !value;
-            }
-        }, 1);
-        
-        // Find all connected floor regions
-        const regions = this.findConnectedRegions(tempMap);
-        
-        // Sort regions by size (largest first)
-        regions.sort((a, b) => b.length - a.length);
-        
-        // If we have at least one region, make sure only the largest is floor, others are wall
-        if (regions.length > 0) {
-            const largestRegion = regions[0];
-            const largestRegionKeys = new Set(largestRegion.map(pos => `${pos.x},${pos.y}`));
-            
-            // Mark all tiles not in the largest region as walls
-            for (const key in tempMap) {
-                if (!tempMap[key].isWall && !largestRegionKeys.has(key)) {
-                    tempMap[key].isWall = true;
-                }
-            }
-        }
-        
-        // Now transform the temporary map into our actual game map with proper tile types
-        for (const key in tempMap) {
-            const { x, y, isWall } = tempMap[key];
-            
-            if (!isWall) {
-                // Floor tiles - change types based on level depth
-                let floorTypes;
-                
-                if (this.currentLevel <= 3) {
-                    // Upper levels - grass and dirt
-                    floorTypes = ['floorGrass1', 'floorGrass2', 'floorGrass3', 'floorDirt1', 'floorDirt2', 'floorDirt3'];
-                } else if (this.currentLevel <= 6) {
-                    // Middle levels - stone and dirt
-                    floorTypes = ['floorStone1', 'floorStone2', 'floorStone3', 'floorDirt1', 'floorDirt2', 'floorDirt3'];
+        // Fill the map with walls and floors - apply the size constraints here
+        let tempMap = new Array(MAP_HEIGHT);
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            tempMap[y] = new Array(MAP_WIDTH);
+            for (let x = 0; x < MAP_WIDTH; x++) {
+                // For smaller maps, put walls outside the effective area
+                if (this.currentLevel <= 6 && 
+                    (x < marginX || x >= marginX + effectiveWidth || 
+                     y < marginY || y >= marginY + effectiveHeight)) {
+                    tempMap[y][x] = 1; // Wall
+                    this.map[y][x] = { type: 'wall1' };
                 } else {
-                    // Deep levels - mostly stone
-                    floorTypes = ['floorStone1', 'floorStone2', 'floorStone3', 'floorDark'];
-                }
-                
-                const randomFloor = floorTypes[Math.floor(Math.random() * floorTypes.length)];
-                this.map[y][x] = { type: randomFloor };
-                
-                // 5% chance to place a feature on the floor
-                if (Math.random() < 0.05) {
-                    let features;
+                    // Normal map generation inside effective area
+                    const isWall = generator.get(x, y);
+                    tempMap[y][x] = isWall;
                     
-                    if (this.currentLevel <= 3) {
-                        // Upper levels - nature features
-                        features = ['mushroom', 'sapling'];
+                    if (isWall) {
+                        this.map[y][x] = { type: 'wall1' };
                     } else {
-                        // Lower levels - dungeon features
-                        features = ['mushroom'];
+                        // Determine floor type
+                        const floorType = (Math.random() < 0.85) ? 'floor1' : 'floor2';
+                        this.map[y][x] = { type: floorType };
                     }
-                    
-                    // Add rare features
-                    if (Math.random() < 0.02) {
-                        if (this.currentLevel <= 3) {
-                            features.push('smallTree');
-                        }
-                    }
-                    if (Math.random() < 0.01) {
-                        features.push('chest');
-                    }
-                    
-                    const randomFeature = features[Math.floor(Math.random() * features.length)];
-                    this.map[y][x].feature = randomFeature;
                 }
-            } else {
-                // Wall tiles - change types based on level depth
-                let wallTypes;
-                
-                if (this.currentLevel <= 3) {
-                    // Upper levels - dirt and brick
-                    wallTypes = ['wallBrickTop', 'wallDirtTop'];
-                } else if (this.currentLevel <= 6) {
-                    // Middle levels - brick and stone
-                    wallTypes = ['wallBrickTop', 'wallStoneTop'];
-                } else {
-                    // Deep levels - mostly stone
-                    wallTypes = ['wallStoneTop', 'wallStoneTop', 'wallBrickTop'];
-                }
-                
-                const randomWall = wallTypes[Math.floor(Math.random() * wallTypes.length)];
-                this.map[y][x] = { type: randomWall };
             }
         }
         
@@ -600,22 +541,20 @@ class GladelikeGame {
     }
     
     findConnectedRegions(tempMap) {
-        // Create a set to track visited positions
-        const visited = new Set();
-        // Array to store all regions
         const regions = [];
+        const visited = new Set();
         
-        // Loop through all positions
+        // Search through all tiles
         for (let y = 0; y < MAP_HEIGHT; y++) {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 const key = `${x},${y}`;
                 
                 // Skip if already visited or if it's a wall
-                if (visited.has(key) || tempMap[key].isWall) {
+                if (visited.has(key) || tempMap[y][x] === 1) {
                     continue;
                 }
                 
-                // Start a new flood fill from this position
+                // Found an unvisited floor tile, flood fill from here
                 const region = this.floodFill(tempMap, x, y, visited);
                 regions.push(region);
             }
@@ -625,33 +564,41 @@ class GladelikeGame {
     }
     
     floodFill(tempMap, startX, startY, visited) {
-        // The region we're building
         const region = [];
-        
-        // Queue for breadth-first search
         const queue = [{x: startX, y: startY}];
         
         while (queue.length > 0) {
             const {x, y} = queue.shift();
             const key = `${x},${y}`;
             
-            // Skip if out of bounds, already visited, or a wall
-            if (x < 0 || y < 0 || x >= MAP_WIDTH || y >= MAP_HEIGHT || 
-                visited.has(key) || tempMap[key].isWall) {
-                continue;
-            }
+            // Skip if already visited or a wall
+            if (visited.has(key)) continue;
             
-            // Mark as visited
+            // Add to visited set
             visited.add(key);
-            
-            // Add to region
             region.push({x, y});
             
-            // Add neighbors to queue
-            queue.push({x: x+1, y: y});
-            queue.push({x: x-1, y: y});
-            queue.push({x: x, y: y+1});
-            queue.push({x: x, y: y-1});
+            // Check all 4 neighbors
+            const neighbors = [
+                {x: x-1, y: y},
+                {x: x+1, y: y},
+                {x: x, y: y-1},
+                {x: x, y: y+1}
+            ];
+            
+            for (const neighbor of neighbors) {
+                const nx = neighbor.x;
+                const ny = neighbor.y;
+                const neighborKey = `${nx},${ny}`;
+                
+                // Skip if out of bounds, already visited, or a wall
+                if (nx < 0 || ny < 0 || nx >= MAP_WIDTH || ny >= MAP_HEIGHT || 
+                    visited.has(neighborKey) || tempMap[ny][nx] === 1) {
+                    continue;
+                }
+                
+                queue.push(neighbor);
+            }
         }
         
         return region;
@@ -814,7 +761,7 @@ class GladelikeGame {
         this.monsters = [];
         
         // Number of monsters increases with depth
-        const numMonsters = 3 + Math.floor(this.currentLevel / 2);
+        const numMonsters = BASE_MONSTERS + Math.floor(this.currentLevel * 1.5);
         
         // Different monster pools based on depth
         let monsterPool;
@@ -826,7 +773,26 @@ class GladelikeGame {
             monsterPool = ['orcBlademaster', 'orcWizard', 'skeleton', 'ghoul'];
         }
         
-        for (let i = 0; i < numMonsters; i++) {
+        // Calculate monster density based on actual available floor space
+        let floorTileCount = 0;
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            for (let x = 0; x < MAP_WIDTH; x++) {
+                if (this.isValidMove(x, y)) {
+                    floorTileCount++;
+                }
+            }
+        }
+        
+        // Adjust monster count based on available floor space
+        // Ensure reasonable density regardless of map size
+        const adjustedNumMonsters = Math.min(
+            numMonsters, 
+            Math.floor(floorTileCount * 0.1) // Max 10% of floor tiles have monsters
+        );
+        
+        console.log(`Placing ${adjustedNumMonsters} monsters on level ${this.currentLevel} with ${floorTileCount} floor tiles`);
+        
+        for (let i = 0; i < adjustedNumMonsters; i++) {
             // Get available positions (no player, no NPCs, no other monsters, valid move)
             const availableSpots = [];
             for (let y = 0; y < MAP_HEIGHT; y++) {
@@ -834,7 +800,8 @@ class GladelikeGame {
                     if (this.isValidMove(x, y) && 
                         !(this.player.x === x && this.player.y === y) &&
                         !this.npcs.some(npc => npc.x === x && npc.y === y) &&
-                        !this.monsters.some(monster => monster.x === x && monster.y === y)) {
+                        !this.monsters.some(monster => monster.x === x && monster.y === y) &&
+                        !(this.map[y][x].feature === 'stairsDown')) {  // Don't block stairs with monsters
                         availableSpots.push({x, y});
                     }
                 }
