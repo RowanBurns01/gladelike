@@ -25,9 +25,15 @@ class GladelikeGame {
             y: 0
         };
         
-        // Set up player character and NPCs
+        // Set up player character, NPCs, and monsters
         this.player = null;
         this.npcs = [];
+        this.monsters = [];
+        
+        // Player stats
+        this.maxHealth = 100;
+        this.currentHealth = 100;
+        this.playerDamage = [5, 10]; // Min-max damage
         
         // FOV and map memory
         this.visibleTiles = {};
@@ -38,7 +44,22 @@ class GladelikeGame {
         
         // Track resource loading
         this.resourcesLoaded = 0;
-        this.totalResources = 2; // tiles.png and rogues.png
+        this.totalResources = 3; // tiles.png, rogues.png, and monsters.png
+        
+        // Add basic monster stats
+        this.monsterStats = {
+            'goblin': { health: 20, damage: [2, 5] },
+            'giantRat': { health: 15, damage: [1, 4] },
+            'smallMyconid': { health: 12, damage: [1, 3] },
+            'orc': { health: 30, damage: [3, 7] },
+            'goblinArcher': { health: 20, damage: [2, 6] },
+            'giantSpider': { health: 25, damage: [2, 6] },
+            'largeMyconid': { health: 25, damage: [2, 5] },
+            'orcBlademaster': { health: 40, damage: [4, 8] },
+            'orcWizard': { health: 25, damage: [3, 8] },
+            'skeleton': { health: 30, damage: [3, 6] },
+            'ghoul': { health: 35, damage: [3, 7] }
+        };
         
         // Initialize tiles
         this.tilesetImage = new Image();
@@ -57,10 +78,20 @@ class GladelikeGame {
             this.resourcesLoaded++;
             this.checkAllResourcesLoaded();
         };
+
+        // Initialize monster sprites
+        this.monstersImage = new Image();
+        this.monstersImage.src = 'monsters.png';
+        this.monstersImage.onload = () => {
+            this.monstersLoaded = true;
+            this.resourcesLoaded++;
+            this.checkAllResourcesLoaded();
+        };
         
         // Define tile types and character types
         this.defineTileTypes();
         this.defineCharacterTypes();
+        this.defineMonsterTypes();
         
         // Set up keyboard handlers
         this.setupKeyboardHandlers();
@@ -93,6 +124,7 @@ class GladelikeGame {
         if (this.resourcesLoaded === this.totalResources) {
             this.generateMap();
             this.placeCharacters();
+            this.placeMonsters();
             this.computeFOV();
             this.updateCamera();
             this.drawMap();
@@ -114,134 +146,105 @@ class GladelikeGame {
     }
     
     setupKeyboardHandlers() {
-        // Add keyboard event listeners
+        // Track pressed keys
+        const keys = {};
+        
+        // Key down event
         window.addEventListener('keydown', (e) => {
             if (!this.player) return;
             
-            let newX = this.player.x;
-            let newY = this.player.y;
+            // Store key state
+            keys[e.key] = true;
             
-            // Handle different arrow keys
-            switch (e.key) {
-                case 'ArrowUp':
-                    newY--;
-                    break;
-                case 'ArrowDown':
-                    newY++;
-                    break;
-                case 'ArrowLeft':
-                    newX--;
-                    break;
-                case 'ArrowRight':
-                    newX++;
-                    break;
-                default:
-                    return; // Ignore other keys
-            }
-            
-            // Check if the move is valid
-            if (this.isValidMove(newX, newY)) {
-                // Check if new position has stairs
-                const tile = this.map[newY][newX];
-                const hasStairs = tile && tile.feature === 'stairsDown';
-                
-                // Move the player
-                this.player.x = newX;
-                this.player.y = newY;
-                
-                // If player stepped on stairs, go to next level
-                if (hasStairs) {
-                    this.goDownstairs();
-                } else {
-                    // Regular movement
-                    this.computeFOV();
-                    this.updateCamera();
-                    this.drawMap();
-                    this.updateUI();
-                }
-            }
+            // Process movement based on key combinations
+            this.processMovement(keys);
         });
-
-        // Set up key repeat for continuous movement
-        let keyRepeatInterval = null;
-        let keyRepeatTimeout = null;
-        let lastKey = null;
-
-        window.addEventListener('keydown', (e) => {
-            if (!this.player) return;
+        
+        // Key up event
+        window.addEventListener('keyup', (e) => {
+            // Remove key from pressed keys
+            keys[e.key] = false;
+        });
+    }
+    
+    processMovement(keys) {
+        if (!this.player) return;
+        
+        let dx = 0;
+        let dy = 0;
+        
+        // Calculate direction based on arrow keys
+        if (keys['ArrowUp']) dy -= 1;
+        if (keys['ArrowDown']) dy += 1;
+        if (keys['ArrowLeft']) dx -= 1;
+        if (keys['ArrowRight']) dx += 1;
+        
+        // If no movement, return
+        if (dx === 0 && dy === 0) return;
+        
+        const newX = this.player.x + dx;
+        const newY = this.player.y + dy;
+        
+        // Check for combat
+        const monster = this.monsters.find(m => m.x === newX && m.y === newY);
+        if (monster) {
+            // Player attacks monster
+            const playerDamage = this.performAttack(
+                { damage: this.playerDamage },
+                monster
+            );
             
-            // Only handle arrow keys
-            if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+            // Monster counter-attack if still alive
+            if (monster.health > 0) {
+                // Small delay before counter-attack for better visual feedback
+                setTimeout(() => {
+                    const monsterDamage = this.performAttack(
+                        { damage: this.monsterStats[monster.type].damage },
+                        { health: this.currentHealth, x: this.player.x, y: this.player.y }
+                    );
+                    
+                    // Update player health
+                    this.modifyHealth(-monsterDamage);
+                }, 250);
+            }
+            
+            // Remove monster if dead
+            if (monster.health <= 0) {
+                this.monsters = this.monsters.filter(m => m !== monster);
+            }
+            
+            // Update display
+            this.drawMap();
+            return;
+        }
+        
+        // If no combat, proceed with movement
+        if (this.isValidMove(newX, newY)) {
+            // Check if new position has stairs
+            if (this.map[newY][newX] === 'stairs') {
+                this.goDownstairs();
                 return;
             }
             
-            // If it's a new key, start the repeat sequence
-            if (lastKey !== e.key) {
-                lastKey = e.key;
-                
-                // Clear any existing intervals
-                if (keyRepeatInterval) {
-                    clearInterval(keyRepeatInterval);
-                }
-                if (keyRepeatTimeout) {
-                    clearTimeout(keyRepeatTimeout);
-                }
-                
-                // Initial delay before starting repeat (reduced from 500ms to 300ms)
-                keyRepeatTimeout = setTimeout(() => {
-                    keyRepeatInterval = setInterval(() => {
-                        let newX = this.player.x;
-                        let newY = this.player.y;
-                        
-                        switch (e.key) {
-                            case 'ArrowUp':
-                                newY--;
-                                break;
-                            case 'ArrowDown':
-                                newY++;
-                                break;
-                            case 'ArrowLeft':
-                                newX--;
-                                break;
-                            case 'ArrowRight':
-                                newX++;
-                                break;
-                        }
-                        
-                        if (this.isValidMove(newX, newY)) {
-                            const tile = this.map[newY][newX];
-                            const hasStairs = tile && tile.feature === 'stairsDown';
-                            
-                            this.player.x = newX;
-                            this.player.y = newY;
-                            
-                            if (hasStairs) {
-                                this.goDownstairs();
-                            } else {
-                                this.computeFOV();
-                                this.updateCamera();
-                                this.drawMap();
-                                this.updateUI();
-                            }
-                        }
-                    }, 50); // Repeat every 50ms
-                }, 300); // Reduced from 500ms to 300ms
-            }
-        });
-
-        window.addEventListener('keyup', (e) => {
-            if (e.key === lastKey) {
-                lastKey = null;
-                if (keyRepeatInterval) {
-                    clearInterval(keyRepeatInterval);
-                    keyRepeatInterval = null;
-                }
-                if (keyRepeatTimeout) {
-                    clearTimeout(keyRepeatTimeout);
-                    keyRepeatTimeout = null;
-                }
-            }
-        });
+            // Update player position
+            this.player.x = newX;
+            this.player.y = newY;
+            
+            // Update camera position
+            this.updateCamera();
+            
+            // Move monsters
+            this.moveMonsters();
+            
+            // Compute field of view
+            this.computeFOV();
+            
+            // Update display
+            this.drawMap();
+            
+            // Update UI with player position
+            this.updateUI();
+        }
     }
     
     isValidMove(x, y) {
@@ -381,6 +384,37 @@ class GladelikeGame {
             'shopkeep': [7, 2],
             'elderlyWoman': [7, 3],
             'elderlyMan': [7, 4]
+        };
+    }
+    
+    defineMonsterTypes() {
+        // Define coordinates for each monster in the monsters tileset
+        // Format: [row, col] - starting from 0
+        this.monsterTypes = {
+            // Row 1 - Orcs and Goblins
+            'orc': [0, 0],
+            'orcWizard': [0, 1],
+            'goblin': [0, 2],
+            'orcBlademaster': [0, 3],
+            'orcWarchief': [0, 4],
+            'goblinArcher': [0, 5],
+            'goblinMage': [0, 6],
+            'goblinBrute': [0, 7],
+            
+            // Row 5 - Undead
+            'skeleton': [4, 0],
+            'skeletonArcher': [4, 1],
+            'zombie': [4, 4],
+            'ghoul': [4, 5],
+            
+            // Row 7 - Basic monsters
+            'giantSpider': [6, 8],
+            'lesserGiantSpider': [6, 9],
+            'giantRat': [6, 11],
+            
+            // Row 11 - Fungi
+            'smallMyconid': [10, 0],
+            'largeMyconid': [10, 1]
         };
     }
     
@@ -752,6 +786,100 @@ class GladelikeGame {
         }
     }
     
+    placeMonsters() {
+        // Clear existing monsters
+        this.monsters = [];
+        
+        // Number of monsters increases with depth
+        const numMonsters = 3 + Math.floor(this.currentLevel / 2);
+        
+        // Different monster pools based on depth
+        let monsterPool;
+        if (this.currentLevel <= 3) {
+            monsterPool = ['goblin', 'giantRat', 'smallMyconid'];
+        } else if (this.currentLevel <= 6) {
+            monsterPool = ['orc', 'goblinArcher', 'giantSpider', 'largeMyconid'];
+        } else {
+            monsterPool = ['orcBlademaster', 'orcWizard', 'skeleton', 'ghoul'];
+        }
+        
+        for (let i = 0; i < numMonsters; i++) {
+            // Get available positions (no player, no NPCs, no other monsters, valid move)
+            const availableSpots = [];
+            for (let y = 0; y < MAP_HEIGHT; y++) {
+                for (let x = 0; x < MAP_WIDTH; x++) {
+                    if (this.isValidMove(x, y) && 
+                        !(this.player.x === x && this.player.y === y) &&
+                        !this.npcs.some(npc => npc.x === x && npc.y === y) &&
+                        !this.monsters.some(monster => monster.x === x && monster.y === y)) {
+                        availableSpots.push({x, y});
+                    }
+                }
+            }
+            
+            if (availableSpots.length === 0) break;
+            
+            const spot = availableSpots[Math.floor(Math.random() * availableSpots.length)];
+            const monsterType = monsterPool[Math.floor(Math.random() * monsterPool.length)];
+            
+            // Create monster with health
+            this.monsters.push({
+                x: spot.x,
+                y: spot.y,
+                type: monsterType,
+                health: this.monsterStats[monsterType].health,
+                maxHealth: this.monsterStats[monsterType].health,
+                lastMoveTime: 0
+            });
+        }
+    }
+    
+    moveMonsters() {
+        if (!this.player) return;
+        
+        this.monsters.forEach(monster => {
+            // Only move occasionally - could tie to a turn system later
+            if (Math.random() < 0.8) return; // 80% chance to not move
+            
+            // Choose a random direction
+            const directions = [
+                {x: -1, y: 0},
+                {x: 1, y: 0},
+                {x: 0, y: -1},
+                {x: 0, y: 1}
+            ];
+            
+            const direction = directions[Math.floor(Math.random() * directions.length)];
+            const newX = monster.x + direction.x;
+            const newY = monster.y + direction.y;
+            
+            // Check if monster is adjacent to player - if so, attack instead of moving
+            if (Math.abs(monster.x - this.player.x) <= 1 && 
+                Math.abs(monster.y - this.player.y) <= 1) {
+                
+                // Monster attacks player
+                const damage = this.performAttack(
+                    { damage: this.monsterStats[monster.type].damage },
+                    { health: this.currentHealth, x: this.player.x, y: this.player.y }
+                );
+                
+                // Update player health
+                this.modifyHealth(-damage);
+                return;
+            }
+            
+            // Otherwise try to move (normal movement logic)
+            if (this.isValidMove(newX, newY) && 
+                !(this.player.x === newX && this.player.y === newY) &&
+                !this.npcs.some(npc => npc.x === newX && npc.y === newY) &&
+                !this.monsters.some(m => m.x === newX && m.y === newY)) {
+                
+                monster.x = newX;
+                monster.y = newY;
+            }
+        });
+    }
+    
     goDownstairs() {
         // Increment dungeon level
         this.currentLevel++;
@@ -816,15 +944,162 @@ class GladelikeGame {
             levelIndicator.style.top = '10px';
             levelIndicator.style.left = '10px';
             levelIndicator.style.color = 'white';
-            levelIndicator.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
             levelIndicator.style.padding = '5px 10px';
             levelIndicator.style.borderRadius = '3px';
             levelIndicator.style.fontFamily = 'Arial, sans-serif';
+            levelIndicator.style.textShadow = '2px 2px 3px rgba(0,0,0,0.8)'; // Add text shadow for better visibility
             
             document.getElementById('game-container').appendChild(levelIndicator);
         }
         
-        levelIndicator.textContent = `Dungeon Level: ${this.currentLevel} (${this.player.x}, ${this.player.y})`;
+        // Remove the coordinates from the level display
+        levelIndicator.textContent = `Dungeon Level: ${this.currentLevel}`;
+
+        // Create or update the health bar
+        let healthBar = document.getElementById('health-bar-container');
+        
+        if (!healthBar) {
+            // Create container
+            healthBar = document.createElement('div');
+            healthBar.id = 'health-bar-container';
+            healthBar.style.position = 'absolute';
+            healthBar.style.top = '45px';
+            healthBar.style.left = '10px';
+            healthBar.style.padding = '5px 10px';
+            healthBar.style.borderRadius = '3px';
+            healthBar.style.width = '200px';
+            healthBar.style.fontFamily = 'Arial, sans-serif';
+            
+            // Create heart icon
+            const heart = document.createElement('span');
+            heart.textContent = '❤️';
+            heart.style.marginRight = '5px';
+            heart.style.fontSize = '14px';
+            heart.style.textShadow = '2px 2px 3px rgba(0,0,0,0.8)'; // Add text shadow for better visibility
+            healthBar.appendChild(heart);
+            
+            // Create the actual health bar
+            const bar = document.createElement('div');
+            bar.id = 'health-bar';
+            bar.style.height = '15px';
+            bar.style.width = '160px';
+            bar.style.backgroundColor = 'rgba(0, 0, 0, 0.5)'; // Keep slight darkness for the empty part
+            bar.style.borderRadius = '7px';
+            bar.style.overflow = 'hidden';
+            bar.style.display = 'inline-block';
+            bar.style.verticalAlign = 'middle';
+            bar.style.boxShadow = '0 0 5px rgba(0,0,0,0.5)'; // Add subtle shadow
+            
+            // Create the fill
+            const fill = document.createElement('div');
+            fill.id = 'health-fill';
+            fill.style.height = '100%';
+            fill.style.width = '100%';
+            fill.style.background = 'linear-gradient(to right, #ff5f6d, #ffc371)';
+            fill.style.transition = 'width 0.3s ease-in-out';
+            bar.appendChild(fill);
+            
+            healthBar.appendChild(bar);
+            
+            // Create health text display
+            const healthText = document.createElement('div');
+            healthText.id = 'health-text';
+            healthText.style.color = 'white';
+            healthText.style.marginTop = '5px';
+            healthText.style.fontSize = '12px';
+            healthText.style.textShadow = '1px 1px 2px rgba(0,0,0,0.8)';
+            healthBar.appendChild(healthText);
+            
+            document.getElementById('game-container').appendChild(healthBar);
+        }
+        
+        // Update health bar fill
+        const healthFill = document.getElementById('health-fill');
+        const healthPercentage = (this.currentHealth / this.maxHealth) * 100;
+        healthFill.style.width = `${healthPercentage}%`;
+        
+        // Update health text
+        const healthText = document.getElementById('health-text');
+        if (healthText) {
+            healthText.textContent = `${Math.round(this.currentHealth)} / ${this.maxHealth}`;
+        }
+    }
+
+    // Add method to modify health
+    modifyHealth(amount) {
+        this.currentHealth = Math.max(0, Math.min(this.maxHealth, this.currentHealth + amount));
+        
+        // Add red flash effect if taking damage
+        if (amount < 0) {
+            this.playerDamageFlash();
+        }
+        
+        this.updateUI();
+        
+        // Check for player death
+        if (this.currentHealth <= 0) {
+            this.playerDied();
+        }
+    }
+    
+    // Add player damage visual effect
+    playerDamageFlash() {
+        const gameContainer = document.getElementById('game-container');
+        const flash = document.createElement('div');
+        flash.style.position = 'absolute';
+        flash.style.top = '0';
+        flash.style.left = '0';
+        flash.style.width = '100%';
+        flash.style.height = '100%';
+        flash.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+        flash.style.pointerEvents = 'none';
+        flash.style.zIndex = '999';
+        
+        gameContainer.appendChild(flash);
+        
+        // Fade out and remove
+        flash.animate([
+            { opacity: 0.3 },
+            { opacity: 0 }
+        ], {
+            duration: 300,
+            easing: 'ease-out'
+        }).onfinish = () => flash.remove();
+    }
+    
+    // Handle player death
+    playerDied() {
+        // Create a death message overlay
+        const gameContainer = document.getElementById('game-container');
+        const deathMessage = document.createElement('div');
+        deathMessage.style.position = 'absolute';
+        deathMessage.style.top = '50%';
+        deathMessage.style.left = '50%';
+        deathMessage.style.transform = 'translate(-50%, -50%)';
+        deathMessage.style.color = 'red';
+        deathMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+        deathMessage.style.padding = '20px';
+        deathMessage.style.borderRadius = '10px';
+        deathMessage.style.fontSize = '24px';
+        deathMessage.style.fontWeight = 'bold';
+        deathMessage.style.textAlign = 'center';
+        deathMessage.style.zIndex = '1000';
+        deathMessage.textContent = 'You have died!';
+        
+        // Add a restart button
+        const restartButton = document.createElement('button');
+        restartButton.textContent = 'Restart Game';
+        restartButton.style.marginTop = '15px';
+        restartButton.style.padding = '10px 20px';
+        restartButton.style.fontSize = '16px';
+        restartButton.style.cursor = 'pointer';
+        restartButton.onclick = () => {
+            location.reload(); // Simple restart by reloading the page
+        };
+        
+        deathMessage.appendChild(document.createElement('br'));
+        deathMessage.appendChild(restartButton);
+        gameContainer.appendChild(deathMessage);
     }
     
     computeFOV() {
@@ -895,7 +1170,7 @@ class GladelikeGame {
     }
     
     drawMap() {
-        if (!this.tilesetLoaded || !this.roguesLoaded) return;
+        if (!this.tilesetLoaded || !this.roguesLoaded || !this.monstersLoaded) return;
         
         // Clear the canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -984,8 +1259,97 @@ class GladelikeGame {
             );
         }
         
+        // Draw monsters (only if visible and on screen)
+        for (const monster of this.monsters) {
+            if (this.isTileVisible(monster.x, monster.y) && this.isOnScreen(monster.x, monster.y)) {
+                const screenX = this.mapToScreenX(monster.x);
+                const screenY = this.mapToScreenY(monster.y);
+                
+                this.ctx.globalAlpha = this.visibleTiles[`${monster.x},${monster.y}`];
+                const [monsterY, monsterX] = this.monsterTypes[monster.type];
+                this.ctx.drawImage(
+                    this.monstersImage,
+                    monsterX * TILE_SIZE, monsterY * TILE_SIZE, TILE_SIZE, TILE_SIZE,
+                    screenX, screenY, TILE_SIZE, TILE_SIZE
+                );
+            }
+        }
+        
         // Reset global alpha
         this.ctx.globalAlpha = 1.0;
+    }
+
+    // Add combat methods
+    performAttack(attacker, target) {
+        // Calculate random damage
+        const damage = Math.floor(
+            Math.random() * (attacker.damage[1] - attacker.damage[0] + 1) + attacker.damage[0]
+        );
+        
+        // Apply damage
+        target.health = Math.max(0, target.health - damage);
+        
+        // Create damage number
+        this.showDamageNumber(damage, target.x, target.y);
+        
+        // Screen shake on hits
+        this.screenShake(Math.min(damage / 2, 5));
+        
+        return damage;
+    }
+
+    showDamageNumber(amount, x, y) {
+        // Create damage number element
+        const number = document.createElement('div');
+        number.className = 'damage-number';
+        number.textContent = Math.round(amount);
+        
+        // Convert game coordinates to screen coordinates
+        const screenX = this.mapToScreenX(x);
+        const screenY = this.mapToScreenY(y);
+        
+        // Position the number
+        number.style.left = `${screenX + TILE_SIZE/2}px`;
+        number.style.top = `${screenY}px`;
+        number.style.position = 'absolute';
+        number.style.color = '#ff0000';
+        number.style.fontWeight = 'bold';
+        number.style.textShadow = '2px 2px 0 #000';
+        number.style.zIndex = '1000';
+        
+        // Add to game container
+        document.getElementById('game-container').appendChild(number);
+        
+        // Animate and remove
+        number.animate([
+            { transform: 'translateY(0)', opacity: 1 },
+            { transform: 'translateY(-30px)', opacity: 0 }
+        ], {
+            duration: 1000,
+            easing: 'ease-out'
+        }).onfinish = () => number.remove();
+    }
+
+    screenShake(intensity) {
+        const container = document.getElementById('game-container');
+        const duration = 100; // milliseconds
+        let start = null;
+        
+        function shake(timestamp) {
+            if (!start) start = timestamp;
+            const progress = timestamp - start;
+            
+            if (progress < duration) {
+                const x = Math.random() * intensity * 2 - intensity;
+                const y = Math.random() * intensity * 2 - intensity;
+                container.style.transform = `translate(${x}px, ${y}px)`;
+                requestAnimationFrame(shake);
+            } else {
+                container.style.transform = 'translate(0, 0)';
+            }
+        }
+        
+        requestAnimationFrame(shake);
     }
 }
 
