@@ -4,7 +4,7 @@
 const TILE_SIZE = 32; // Size of each tile in pixels
 const MAP_WIDTH = 80;  // Actual map width
 const MAP_HEIGHT = 50; // Actual map height
-const FOV_RADIUS = 10; // How far the player can see
+const FOV_RADIUS = 6; // How far the player can see
 
 // Game class
 class GladelikeGame {
@@ -336,6 +336,14 @@ class GladelikeGame {
             };
         });
         
+        // Connect all non-wall sections
+        generator.connect((x, y, value) => {
+            const key = `${x},${y}`;
+            if (tempMap[key]) {
+                tempMap[key].isWall = !value;
+            }
+        }, 1);
+        
         // Find all connected floor regions
         const regions = this.findConnectedRegions(tempMap);
         
@@ -420,12 +428,6 @@ class GladelikeGame {
                 const randomWall = wallTypes[Math.floor(Math.random() * wallTypes.length)];
                 this.map[y][x] = { type: randomWall };
             }
-        }
-        
-        // Add doors - number increases with depth
-        const numDoors = 3 + Math.floor(this.currentLevel / 2);
-        for (let i = 0; i < numDoors; i++) {
-            this.placeFeatureOnEmptyFloor('door');
         }
         
         // Add trees (only on upper levels)
@@ -595,29 +597,40 @@ class GladelikeGame {
             ];
         }
         
-        // Place player character at a random passable location
+        // Place player character at the center of the map
+        const centerX = Math.floor(MAP_WIDTH / 2);
+        const centerY = Math.floor(MAP_HEIGHT / 2);
+        
+        // Find the nearest valid position to the center
+        let playerX = centerX;
+        let playerY = centerY;
+        let searchRadius = 0;
         let playerPlaced = false;
         
-        // Get all available floor tiles with no features
-        const availableTiles = [];
-        for (let y = 0; y < MAP_HEIGHT; y++) {
-            for (let x = 0; x < MAP_WIDTH; x++) {
-                if (this.isValidMove(x, y)) {
-                    availableTiles.push({x, y});
+        while (!playerPlaced && searchRadius < Math.max(MAP_WIDTH, MAP_HEIGHT)) {
+            for (let dy = -searchRadius; dy <= searchRadius; dy++) {
+                for (let dx = -searchRadius; dx <= searchRadius; dx++) {
+                    const x = centerX + dx;
+                    const y = centerY + dy;
+                    
+                    if (this.isValidMove(x, y)) {
+                        playerX = x;
+                        playerY = y;
+                        playerPlaced = true;
+                        break;
+                    }
                 }
+                if (playerPlaced) break;
             }
+            searchRadius++;
         }
         
-        // If there are available tiles, place the player on a random one
-        if (availableTiles.length > 0) {
-            const randomIndex = Math.floor(Math.random() * availableTiles.length);
-            const {x, y} = availableTiles[randomIndex];
+        if (playerPlaced) {
             this.player = {
-                x,
-                y,
+                x: playerX,
+                y: playerY,
                 type: 'rogue' // Player is a rogue
             };
-            playerPlaced = true;
         } else {
             // This shouldn't happen with our improved map generation, but just in case
             console.error("No valid position found for player placement.");
