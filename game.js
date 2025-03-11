@@ -52,6 +52,13 @@ class GladelikeGame {
         this.resourcesLoaded = 0;
         this.totalResources = 4; // tiles.png, rogues.png, monsters.png, animated-tiles.png
         
+        // Add combat tracking
+        this.recentlyAttacked = new Map(); // For tracking which monsters were recently in combat
+        this.attackedMonsters = new Set(); // Track which monsters have been attacked at least once
+        
+        // Add CSS styles for combat enhancements
+        this.addCombatStyles();
+        
         // Add basic monster stats
         this.monsterStats = {
             'goblin': { health: 20, damage: [2, 5] },
@@ -1483,6 +1490,12 @@ class GladelikeGame {
         // Draw animated tiles on top
         this.drawAnimatedTiles();
         
+        // Draw monsters
+        this.drawMonsters();
+        
+        // Draw health bars for monsters
+        this.drawHealthBars();
+        
         // Draw NPCs (only if visible and on screen)
         for (const npc of this.npcs) {
             if (this.isOnScreen(npc.x, npc.y)) {
@@ -1514,25 +1527,6 @@ class GladelikeGame {
                 charX * TILE_SIZE, charY * TILE_SIZE, TILE_SIZE, TILE_SIZE, // Source rectangle
                 screenX, screenY, TILE_SIZE, TILE_SIZE // Destination rectangle
             );
-        }
-        
-        // Draw monsters (only if visible and on screen)
-        for (const monster of this.monsters) {
-            if (this.isOnScreen(monster.x, monster.y)) {
-                const key = `${monster.x},${monster.y}`;
-                if (this.visibleTiles[key] !== undefined) {
-                    const screenX = this.mapToScreenX(monster.x);
-                    const screenY = this.mapToScreenY(monster.y);
-                    
-                    this.ctx.globalAlpha = this.visibleTiles[key];
-                    const [monsterY, monsterX] = this.monsterTypes[monster.type];
-                    this.ctx.drawImage(
-                        this.monstersImage,
-                        monsterX * TILE_SIZE, monsterY * TILE_SIZE, TILE_SIZE, TILE_SIZE,
-                        screenX, screenY, TILE_SIZE, TILE_SIZE
-                    );
-                }
-            }
         }
         
         // Reset global alpha
@@ -1577,53 +1571,108 @@ class GladelikeGame {
 
     // Add combat methods
     performAttack(attacker, target) {
-        // Calculate random damage
-        const damage = Math.floor(
-            Math.random() * (attacker.damage[1] - attacker.damage[0] + 1) + attacker.damage[0]
-        );
+        // Calculate damage (random between min and max)
+        const [minDamage, maxDamage] = Array.isArray(attacker.damage) ? attacker.damage : [1, attacker.damage];
+        
+        // Add critical hit chance (10%)
+        const isCritical = Math.random() < 0.1;
+        
+        // Calculate base damage
+        let damage = Math.floor(Math.random() * (maxDamage - minDamage + 1)) + minDamage;
+        
+        // Double damage on critical hit
+        if (isCritical) {
+            damage = Math.floor(damage * 2);
+        }
+        
+        // Show attack animation
+        if (attacker === this.player || target === this.player) {
+            this.createAttackAnimation(
+                attacker.x || this.player.x, 
+                attacker.y || this.player.y, 
+                target.x || this.player.x, 
+                target.y || this.player.y
+            );
+            
+            // Add screen shake on critical or attack on player
+            if (isCritical || target === this.player) {
+                this.screenShake(isCritical ? 8 : 5);
+            }
+        }
+        
+        // Mark target as attacked and recently attacked
+        if (target !== this.player) {
+            // Add to attacked monsters set
+            this.attackedMonsters.add(`${target.x},${target.y}`);
+            
+            // Clear any existing timeout
+            if (this.recentlyAttacked.has(`${target.x},${target.y}`)) {
+                clearTimeout(this.recentlyAttacked.get(`${target.x},${target.y}`));
+            }
+            
+            // Set new timeout
+            const timeout = setTimeout(() => {
+                this.recentlyAttacked.delete(`${target.x},${target.y}`);
+            }, 3000);
+            
+            this.recentlyAttacked.set(`${target.x},${target.y}`, timeout);
+        }
         
         // Apply damage
         target.health = Math.max(0, target.health - damage);
         
-        // Create damage number
-        this.showDamageNumber(damage, target.x, target.y);
-        
-        // Screen shake on hits
-        this.screenShake(Math.min(damage / 2, 5));
+        // Show damage number
+        this.showDamageNumber(damage, target.x, target.y, isCritical);
         
         return damage;
     }
 
-    showDamageNumber(amount, x, y) {
+    showDamageNumber(amount, x, y, isCritical = false) {
         // Create damage number element
         const number = document.createElement('div');
-        number.className = 'damage-number';
-        number.textContent = Math.round(amount);
+        number.className = isCritical ? 'damage-number critical' : 'damage-number';
+        
+        // Format the text
+        if (amount === 0) {
+            number.textContent = "Miss";
+            number.classList.add('miss');
+        } else {
+            number.textContent = Math.round(amount) + (isCritical ? '!' : '');
+        }
         
         // Convert game coordinates to screen coordinates
         const screenX = this.mapToScreenX(x);
         const screenY = this.mapToScreenY(y);
         
+        // Random X offset for variety
+        const randomOffsetX = (Math.random() - 0.5) * 10;
+        
         // Position the number
-        number.style.left = `${screenX + TILE_SIZE/2}px`;
+        number.style.left = `${screenX + TILE_SIZE/2 + randomOffsetX}px`;
         number.style.top = `${screenY}px`;
-        number.style.position = 'absolute';
-        number.style.color = '#ff0000';
-        number.style.fontWeight = 'bold';
-        number.style.textShadow = '2px 2px 0 #000';
-        number.style.zIndex = '1000';
         
         // Add to game container
         document.getElementById('game-container').appendChild(number);
         
-        // Animate and remove
-        number.animate([
-            { transform: 'translateY(0)', opacity: 1 },
-            { transform: 'translateY(-30px)', opacity: 0 }
-        ], {
-            duration: 1000,
-            easing: 'ease-out'
-        }).onfinish = () => number.remove();
+        // Different animation for criticals
+        if (isCritical) {
+            number.animate([
+                { transform: 'translateY(0) scale(1)', opacity: 1 },
+                { transform: 'translateY(-40px) scale(1.4)', opacity: 1, offset: 0.4 },
+                { transform: 'translateY(-50px) scale(1.2)', opacity: 0 }
+            ], {
+                duration: 1500,
+                easing: 'cubic-bezier(0.215, 0.610, 0.355, 1.000)'
+            }).onfinish = () => number.remove();
+        } else {
+            number.animate([
+                { transform: 'translateY(0)', opacity: 1 },
+                { transform: 'translateY(-30px)', opacity: 0 }
+            ], {
+                duration: 1000,
+                easing: 'ease-out'
+            }).onfinish = () => number.remove();
+        }
     }
 
     screenShake(intensity) {
@@ -1752,6 +1801,236 @@ class GladelikeGame {
         victoryMessage.appendChild(document.createElement('br'));
         victoryMessage.appendChild(restartButton);
         gameContainer.appendChild(victoryMessage);
+    }
+
+    // Add method to inject CSS styles for combat enhancements
+    addCombatStyles() {
+        const style = document.createElement('style');
+        style.textContent = `
+            /* Attack animation styles */
+            .attack-animation {
+                position: absolute;
+                width: 64px;
+                height: 64px;
+                pointer-events: none;
+                z-index: 950;
+                transform-origin: center left;
+            }
+            
+            .slash-effect {
+                position: absolute;
+                width: 100%;
+                height: 100%;
+                border-radius: 50%;
+                clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+                animation: slash 300ms forwards;
+            }
+            
+            .slash-inner {
+                position: absolute;
+                width: 100%;
+                height: 100%;
+                background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+                border-radius: 0 50% 50% 0;
+                transform-origin: left center;
+                transform: scaleX(0);
+                animation: slash-inner 300ms forwards;
+            }
+            
+            @keyframes slash {
+                0% { clip-path: polygon(0 50%, 0 50%, 0 50%, 0 50%); }
+                40% { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+                100% { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+            }
+            
+            @keyframes slash-inner {
+                0% { transform: scaleX(0); opacity: 0; }
+                20% { transform: scaleX(0.5); opacity: 1; }
+                100% { transform: scaleX(1.5); opacity: 0; }
+            }
+            
+            /* Damage number styles */
+            .damage-number {
+                position: absolute;
+                color: #ff3030;
+                font-weight: bold;
+                text-shadow: 1px 1px 1px #000, -1px -1px 1px #000;
+                font-size: 14px;
+                pointer-events: none;
+                z-index: 1000;
+            }
+            
+            .damage-number.critical {
+                color: #ffaa00;
+                font-size: 18px;
+                text-shadow: 0 0 5px #ff6600, 1px 1px 2px #000, -1px -1px 2px #000;
+            }
+            
+            .damage-number.miss {
+                color: #aaaaaa;
+                font-style: italic;
+            }
+            
+            /* Monster health bar styles */
+            .monster-health-bar {
+                position: absolute;
+                border-radius: 2px;
+                overflow: hidden;
+                pointer-events: none;
+                z-index: 900;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+            }
+            
+            .monster-health-bar.fading {
+                opacity: 0;
+                transition: opacity 0.5s;
+            }
+            
+            .health-bar-fill {
+                height: 100%;
+                background-color: #e01414;
+                transition: width 0.2s ease-out;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // Add a new method to draw health bars for monsters
+    drawHealthBars() {
+        // Clear old health bars that might be out of sight
+        const healthBars = document.querySelectorAll('.monster-health-bar');
+        for (const bar of healthBars) {
+            // Check if the monster is still alive and visible
+            const id = bar.id;
+            const [_, x, y] = id.split('-');
+            const key = `${x},${y}`;
+            
+            if (!this.visibleTiles[key] || !this.monsters.some(m => m.x == x && m.y == y)) {
+                bar.remove();
+            }
+        }
+        
+        // Only draw for visible and attacked monsters
+        for (const monster of this.monsters) {
+            const key = `${monster.x},${monster.y}`;
+            
+            // Only draw if monster has been attacked and is visible or recently in combat
+            if (this.attackedMonsters.has(key) && (this.visibleTiles[key] || this.recentlyAttacked.has(key))) {
+                const screenX = this.mapToScreenX(monster.x);
+                const screenY = this.mapToScreenY(monster.y);
+                
+                // Create or update health bar container
+                let healthBar = document.getElementById(`monster-health-${monster.x}-${monster.y}`);
+                
+                if (!healthBar) {
+                    healthBar = document.createElement('div');
+                    healthBar.id = `monster-health-${monster.x}-${monster.y}`;
+                    healthBar.className = 'monster-health-bar';
+                    healthBar.style.left = `${screenX}px`;
+                    healthBar.style.top = `${screenY - 5}px`; // Just above the monster
+                    healthBar.style.width = `${TILE_SIZE}px`;
+                    healthBar.style.height = '4px';
+                    healthBar.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+                    
+                    // Create the fill
+                    const fill = document.createElement('div');
+                    fill.className = 'health-bar-fill';
+                    fill.style.width = `${(monster.health / monster.maxHealth) * 100}%`;
+                    
+                    healthBar.appendChild(fill);
+                    document.getElementById('game-container').appendChild(healthBar);
+                } else {
+                    // Update existing health bar
+                    const fill = healthBar.querySelector('.health-bar-fill');
+                    fill.style.width = `${(monster.health / monster.maxHealth) * 100}%`;
+                    healthBar.style.left = `${screenX}px`;
+                    healthBar.style.top = `${screenY - 5}px`;
+                }
+                
+                // Keep track of recently attacked monsters to keep showing their health bar
+                if (this.recentlyAttacked.has(key)) {
+                    const timeout = this.recentlyAttacked.get(key);
+                    clearTimeout(timeout);
+                    
+                    // Remove from recently attacked after 3 seconds
+                    const newTimeout = setTimeout(() => {
+                        this.recentlyAttacked.delete(key);
+                        
+                        // Fade out health bar if monster is no longer visible
+                        if (!this.visibleTiles[key]) {
+                            const bar = document.getElementById(`monster-health-${monster.x}-${monster.y}`);
+                            if (bar) {
+                                bar.classList.add('fading');
+                                setTimeout(() => bar.remove(), 500);
+                            }
+                        }
+                    }, 3000);
+                    
+                    this.recentlyAttacked.set(key, newTimeout);
+                }
+            }
+        }
+    }
+
+    // Add drawMonsters method to draw the monsters
+    drawMonsters() {
+        // Draw monsters (only if visible and on screen)
+        for (const monster of this.monsters) {
+            if (this.isOnScreen(monster.x, monster.y)) {
+                const key = `${monster.x},${monster.y}`;
+                if (this.visibleTiles[key] !== undefined) {
+                    const screenX = this.mapToScreenX(monster.x);
+                    const screenY = this.mapToScreenY(monster.y);
+                    
+                    this.ctx.globalAlpha = this.visibleTiles[key];
+                    const [monsterY, monsterX] = this.monsterTypes[monster.type];
+                    this.ctx.drawImage(
+                        this.monstersImage,
+                        monsterX * TILE_SIZE, monsterY * TILE_SIZE, TILE_SIZE, TILE_SIZE,
+                        screenX, screenY, TILE_SIZE, TILE_SIZE
+                    );
+                }
+            }
+        }
+    }
+
+    // Add method to create attack animation
+    createAttackAnimation(sourceX, sourceY, targetX, targetY) {
+        // Calculate attack direction
+        const dx = targetX - sourceX;
+        const dy = targetY - sourceY;
+        
+        // Create container for animation
+        const attackContainer = document.createElement('div');
+        attackContainer.className = 'attack-animation';
+        
+        // Create slash effect element
+        const slashEffect = document.createElement('div');
+        slashEffect.className = 'slash-effect';
+        
+        // Create inner slash animation
+        const slashInner = document.createElement('div');
+        slashInner.className = 'slash-inner';
+        
+        // Add inner effect to slash effect
+        slashEffect.appendChild(slashInner);
+        attackContainer.appendChild(slashEffect);
+        
+        // Position it on screen (converting from game to screen coordinates)
+        const screenX = this.mapToScreenX(sourceX);
+        const screenY = this.mapToScreenY(sourceY);
+        attackContainer.style.left = `${screenX + TILE_SIZE/2}px`;
+        attackContainer.style.top = `${screenY + TILE_SIZE/2}px`;
+        
+        // Calculate angle based on direction
+        const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+        attackContainer.style.transform = `rotate(${angle}deg)`;
+        
+        // Add to DOM
+        document.getElementById('game-container').appendChild(attackContainer);
+        
+        // Remove after animation completes
+        setTimeout(() => attackContainer.remove(), 300);
     }
 }
 
