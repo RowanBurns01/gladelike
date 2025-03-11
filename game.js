@@ -4,7 +4,7 @@
 const TILE_SIZE = 32; // Size of each tile in pixels
 const MAP_WIDTH = 80;  // Actual map width
 const MAP_HEIGHT = 50; // Actual map height
-const FOV_RADIUS = 6; // How far the player can see
+const FOV_RADIUS = 3; // How far the player can see
 
 // Game class
 class GladelikeGame {
