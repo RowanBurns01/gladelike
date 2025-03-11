@@ -490,7 +490,7 @@ class GladelikeGame {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 // Initialize with walls
                 tempMap[y][x] = 1;
-                this.map[y][x] = { type: 'wall1' };
+                this.map[y][x] = { type: 'wallStoneTop' };
             }
         }
         
@@ -502,7 +502,7 @@ class GladelikeGame {
                  y < marginY || y >= marginY + effectiveHeight)) {
                 // Outside effective area - keep as wall
                 tempMap[y][x] = 1;
-                this.map[y][x] = { type: 'wall1' };
+                this.map[y][x] = { type: 'wallStoneTop' };
             } else {
                 // Within effective area - use generated value
                 // value = 1 for floor, 0 for wall in ROT.js
@@ -510,10 +510,10 @@ class GladelikeGame {
                 tempMap[y][x] = isWall ? 1 : 0;
                 
                 if (isWall) {
-                    this.map[y][x] = { type: 'wall1' };
+                    this.map[y][x] = { type: 'wallStoneTop' };
                 } else {
                     // Determine floor type
-                    const floorType = (Math.random() < 0.85) ? 'floor1' : 'floor2';
+                    const floorType = (Math.random() < 0.85) ? 'floorStone1' : 'floorStone2';
                     this.map[y][x] = { type: floorType };
                 }
             }
@@ -541,7 +541,7 @@ class GladelikeGame {
                 // If not in largest region and not a wall, convert to wall
                 if (tempMap[y][x] === 0 && !largestRegion.some(pos => pos.x === x && pos.y === y)) {
                     tempMap[y][x] = 1;
-                    this.map[y][x] = { type: 'wall1' };
+                    this.map[y][x] = { type: 'wallStoneTop' };
                 }
             }
         }
@@ -1314,15 +1314,24 @@ class GladelikeGame {
                     const tile = this.map[y][x];
                     if (tile) {
                         // Draw the base tile
-                        const [tileY, tileX] = this.tiles[tile.type];
-                        this.ctx.drawImage(
-                            this.tilesetImage,
-                            tileX * TILE_SIZE, tileY * TILE_SIZE, TILE_SIZE, TILE_SIZE, // Source rectangle
-                            vx * TILE_SIZE, vy * TILE_SIZE, TILE_SIZE, TILE_SIZE // Destination rectangle
-                        );
+                        if (this.tiles[tile.type]) {
+                            const [tileY, tileX] = this.tiles[tile.type];
+                            this.ctx.drawImage(
+                                this.tilesetImage,
+                                tileX * TILE_SIZE, tileY * TILE_SIZE, TILE_SIZE, TILE_SIZE, // Source rectangle
+                                vx * TILE_SIZE, vy * TILE_SIZE, TILE_SIZE, TILE_SIZE // Destination rectangle
+                            );
+                        } else {
+                            // Fallback for missing tile types - use a default tile
+                            this.ctx.drawImage(
+                                this.tilesetImage,
+                                0, 0, TILE_SIZE, TILE_SIZE, // Use first tile as fallback
+                                vx * TILE_SIZE, vy * TILE_SIZE, TILE_SIZE, TILE_SIZE
+                            );
+                        }
                         
                         // Draw feature if present
-                        if (tile.feature) {
+                        if (tile.feature && this.tiles[tile.feature]) {
                             const [featureY, featureX] = this.tiles[tile.feature];
                             this.ctx.drawImage(
                                 this.tilesetImage,
