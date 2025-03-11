@@ -1090,13 +1090,34 @@ class GladelikeGame {
             levelIndicator.style.padding = '5px 10px';
             levelIndicator.style.borderRadius = '3px';
             levelIndicator.style.fontFamily = 'Arial, sans-serif';
-            levelIndicator.style.textShadow = '2px 2px 3px rgba(0,0,0,0.8)'; // Add text shadow for better visibility
+            levelIndicator.style.textShadow = '2px 2px 3px rgba(0,0,0,0.8)';
             
             document.getElementById('game-container').appendChild(levelIndicator);
         }
         
-        // Remove the coordinates from the level display
-        levelIndicator.textContent = `Dungeon Level: ${this.currentLevel}`;
+        // Get level name based on current level
+        let levelName;
+        switch (this.currentLevel) {
+            case 1:
+                levelName = "The Caves";
+                break;
+            case 2:
+                levelName = "The Tunnels";
+                break;
+            case 3:
+                levelName = "The Catacombs";
+                break;
+            case 4:
+                levelName = "The Overgrown Ruins";
+                break;
+            case 5:
+                levelName = "The Ancient Temple";
+                break;
+            default:
+                levelName = `Level ${this.currentLevel}`;
+        }
+        
+        levelIndicator.textContent = `${levelName} (Level ${this.currentLevel})`;
 
         // Create or update the health bar
         let healthBar = document.getElementById('health-bar-container');
@@ -1336,63 +1357,78 @@ class GladelikeGame {
         this.animatedTiles = [];
         this.lightSources = [];
         
-        // We need a player character to place firepits
-        if (!this.player) return;
+        // Find the stairs location
+        let stairsX = -1;
+        let stairsY = -1;
         
-        // Find valid floor tiles around the player spawn point
-        const candidatePositions = [];
-        const spawnX = this.player.x;
-        const spawnY = this.player.y;
-        
-        // Check positions in a radius of 2 around spawn
-        for (let dy = -2; dy <= 2; dy++) {
-            for (let dx = -2; dx <= 2; dx++) {
-                // Skip the player's position and diagonal positions
-                if ((dx === 0 && dy === 0) || (Math.abs(dx) === Math.abs(dy) && Math.abs(dx) === 2)) continue;
-                
-                const x = spawnX + dx;
-                const y = spawnY + dy;
-                
-                // Make sure position is valid and is a floor tile
-                if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT && 
-                    this.isValidMove(x, y) && 
-                    !this.npcs.some(npc => npc.x === x && npc.y === y) &&
-                    !this.monsters.some(monster => monster.x === x && monster.y === y)) {
-                    
-                    candidatePositions.push({x, y});
+        // Search for stairs or victory door
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            for (let x = 0; x < MAP_WIDTH; x++) {
+                const tile = this.map[y][x];
+                if (tile && (tile.feature === 'stairsDown' || (this.currentLevel === MAX_LEVELS && tile.feature === 'door'))) {
+                    stairsX = x;
+                    stairsY = y;
+                    break;
                 }
             }
+            if (stairsX !== -1) break;
         }
         
-        // If we have valid positions, place a firepit at one of them
-        if (candidatePositions.length > 0) {
-            const position = candidatePositions[Math.floor(Math.random() * candidatePositions.length)];
+        // If we found stairs/door, place firepit nearby
+        if (stairsX !== -1 && stairsY !== -1) {
+            // Find valid floor tiles around the stairs
+            const candidatePositions = [];
             
-            // Create the firepit
-            const firepit = {
-                x: position.x,
-                y: position.y,
-                type: 'firepit',
-                animationStartTime: Date.now() + Math.random() * ANIMATION_SPEED // Offset start time for variety
-            };
+            // Check positions in a radius of 2 around stairs
+            for (let dy = -2; dy <= 2; dy++) {
+                for (let dx = -2; dx <= 2; dx++) {
+                    // Skip the stairs position and diagonal positions
+                    if ((dx === 0 && dy === 0) || (Math.abs(dx) === Math.abs(dy) && Math.abs(dx) === 2)) continue;
+                    
+                    const x = stairsX + dx;
+                    const y = stairsY + dy;
+                    
+                    // Make sure position is valid and is a floor tile
+                    if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT && 
+                        this.isValidMove(x, y) && 
+                        !this.npcs.some(npc => npc.x === x && npc.y === y) &&
+                        !this.monsters.some(monster => monster.x === x && monster.y === y)) {
+                        
+                        candidatePositions.push({x, y});
+                    }
+                }
+            }
             
-            // Add to animated tiles
-            this.animatedTiles.push(firepit);
-            
-            // Create light source
-            const lightSource = {
-                x: position.x,
-                y: position.y,
-                type: 'firepit',
-                baseIntensity: this.animatedTileTypes.firepit.lightIntensity,
-                currentIntensity: this.animatedTileTypes.firepit.lightIntensity,
-                radius: this.animatedTileTypes.firepit.lightRadius
-            };
-            
-            // Add to light sources
-            this.lightSources.push(lightSource);
-            
-            console.log(`Placed firepit at ${position.x}, ${position.y}`);
+            // If we have valid positions, place a firepit at one of them
+            if (candidatePositions.length > 0) {
+                const position = candidatePositions[Math.floor(Math.random() * candidatePositions.length)];
+                
+                // Create the firepit
+                const firepit = {
+                    x: position.x,
+                    y: position.y,
+                    type: 'firepit',
+                    animationStartTime: Date.now() + Math.random() * ANIMATION_SPEED
+                };
+                
+                // Add to animated tiles
+                this.animatedTiles.push(firepit);
+                
+                // Create light source
+                const lightSource = {
+                    x: position.x,
+                    y: position.y,
+                    type: 'firepit',
+                    baseIntensity: this.animatedTileTypes.firepit.lightIntensity,
+                    currentIntensity: this.animatedTileTypes.firepit.lightIntensity,
+                    radius: this.animatedTileTypes.firepit.lightRadius
+                };
+                
+                // Add to light sources
+                this.lightSources.push(lightSource);
+                
+                console.log(`Placed firepit at ${position.x}, ${position.y} near stairs/door`);
+            }
         }
     }
     
