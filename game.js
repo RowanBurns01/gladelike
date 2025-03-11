@@ -1175,7 +1175,7 @@ class GladelikeGame {
             pauseButton.style.position = 'absolute';
             pauseButton.style.top = '10px';
             pauseButton.style.right = '10px';
-            pauseButton.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+            pauseButton.style.backgroundColor = 'transparent';
             pauseButton.style.color = 'white';
             pauseButton.style.border = 'none';
             pauseButton.style.outline = 'none';
@@ -1186,18 +1186,19 @@ class GladelikeGame {
             pauseButton.style.zIndex = '10';
             pauseButton.style.fontFamily = 'monospace';
             pauseButton.style.transition = 'background-color 0.2s';
+            pauseButton.style.textShadow = '2px 2px 4px rgba(0, 0, 0, 0.5)';
             
             // Add focus style that removes default outline
             pauseButton.addEventListener('focus', () => {
                 pauseButton.style.outline = 'none';
             });
             
-            // Hover effect
+            // Hover effect - still visible but with semi-transparent background
             pauseButton.onmouseover = () => {
-                pauseButton.style.backgroundColor = 'rgba(60, 60, 60, 0.8)';
+                pauseButton.style.backgroundColor = 'rgba(60, 60, 60, 0.3)';
             };
             pauseButton.onmouseout = () => {
-                pauseButton.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+                pauseButton.style.backgroundColor = 'transparent';
             };
             
             // Add click handler
