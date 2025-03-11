@@ -18,6 +18,9 @@ class GladelikeGame {
         // Add isDead flag
         this.isDead = false;
         
+        // Add pause state
+        this.isPaused = false;
+        
         // Add loading timeout
         setTimeout(() => {
             if (this.resourcesLoaded < this.totalResources) {
@@ -198,7 +201,13 @@ class GladelikeGame {
         
         // Key down event
         window.addEventListener('keydown', (e) => {
-            if (!this.player || this.isDead) return;
+            // Check for pause key (Escape or P)
+            if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
+                this.togglePause();
+                return;
+            }
+            
+            if (!this.player || this.isDead || this.isPaused) return;
             
             // Store key state
             keys[e.key] = true;
@@ -215,7 +224,7 @@ class GladelikeGame {
     }
     
     processMovement(keys) {
-        if (!this.player || this.isDead) return;  // Don't process movement if dead
+        if (!this.player || this.isDead || this.isPaused) return;  // Don't process movement if dead or paused
         
         let dx = 0;
         let dy = 0;
@@ -1155,6 +1164,44 @@ class GladelikeGame {
         
         levelIndicator.textContent = `${levelName} (Level ${this.currentLevel})`;
 
+        // Create or update the pause button
+        let pauseButton = document.getElementById('pause-button');
+        
+        if (!pauseButton) {
+            pauseButton = document.createElement('button');
+            pauseButton.id = 'pause-button';
+            pauseButton.textContent = '❚❚';
+            pauseButton.title = 'Pause Game';
+            pauseButton.style.position = 'absolute';
+            pauseButton.style.top = '10px';
+            pauseButton.style.right = '10px';
+            pauseButton.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+            pauseButton.style.color = 'white';
+            pauseButton.style.border = '1px solid #888';
+            pauseButton.style.borderRadius = '4px';
+            pauseButton.style.padding = '5px 10px';
+            pauseButton.style.fontSize = '16px';
+            pauseButton.style.cursor = 'pointer';
+            pauseButton.style.zIndex = '10';
+            pauseButton.style.fontFamily = 'monospace';
+            pauseButton.style.transition = 'background-color 0.2s';
+            
+            // Hover effect
+            pauseButton.onmouseover = () => {
+                pauseButton.style.backgroundColor = 'rgba(60, 60, 60, 0.8)';
+            };
+            pauseButton.onmouseout = () => {
+                pauseButton.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+            };
+            
+            // Add click handler
+            pauseButton.onclick = () => {
+                this.togglePause();
+            };
+            
+            document.getElementById('game-container').appendChild(pauseButton);
+        }
+        
         // Create or update the health bar
         let healthBar = document.getElementById('health-bar-container');
         
@@ -1787,6 +1834,14 @@ class GladelikeGame {
         const deltaTime = timestamp - this.lastFrameTime;
         this.lastFrameTime = timestamp;
         
+        // Request next frame (always continue the animation loop regardless of pause state)
+        requestAnimationFrame(this.animationLoop.bind(this));
+        
+        // If the game is paused, don't update game state
+        if (this.isPaused) {
+            return;
+        }
+        
         // Update animation timer
         this.animationTimer += deltaTime;
         
@@ -1799,9 +1854,6 @@ class GladelikeGame {
             this.lastMonsterMoveTime = timestamp;
             needsRedraw = true;
         }
-        
-        // Request next frame
-        requestAnimationFrame(this.animationLoop.bind(this));
         
         // Only redraw if we have animated tiles, monsters moved, or the game is initialized
         if ((this.animatedTiles.length > 0 || needsRedraw) && this.player) {
@@ -2122,6 +2174,53 @@ class GladelikeGame {
         
         // Remove after animation completes
         setTimeout(() => attackContainer.remove(), 300);
+    }
+
+    // Add a method to toggle the game pause state
+    togglePause() {
+        this.isPaused = !this.isPaused;
+        
+        // Update the pause button appearance
+        const pauseButton = document.getElementById('pause-button');
+        if (pauseButton) {
+            pauseButton.textContent = this.isPaused ? '▶' : '❚❚';
+            pauseButton.title = this.isPaused ? 'Resume Game' : 'Pause Game';
+        }
+        
+        // Add a pause overlay if paused
+        let pauseOverlay = document.getElementById('pause-overlay');
+        
+        if (this.isPaused) {
+            if (!pauseOverlay) {
+                pauseOverlay = document.createElement('div');
+                pauseOverlay.id = 'pause-overlay';
+                pauseOverlay.style.position = 'absolute';
+                pauseOverlay.style.top = '0';
+                pauseOverlay.style.left = '0';
+                pauseOverlay.style.width = '100%';
+                pauseOverlay.style.height = '100%';
+                pauseOverlay.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+                pauseOverlay.style.display = 'flex';
+                pauseOverlay.style.justifyContent = 'center';
+                pauseOverlay.style.alignItems = 'center';
+                pauseOverlay.style.zIndex = '100';
+                pauseOverlay.style.pointerEvents = 'none';
+                
+                const pauseText = document.createElement('div');
+                pauseText.textContent = 'PAUSED';
+                pauseText.style.color = 'white';
+                pauseText.style.fontSize = '32px';
+                pauseText.style.fontWeight = 'bold';
+                pauseText.style.textShadow = '2px 2px 4px rgba(0, 0, 0, 0.8)';
+                
+                pauseOverlay.appendChild(pauseText);
+                document.getElementById('game-container').appendChild(pauseOverlay);
+            }
+        } else {
+            if (pauseOverlay) {
+                pauseOverlay.remove();
+            }
+        }
     }
 }
 
