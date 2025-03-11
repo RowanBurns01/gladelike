@@ -5,6 +5,7 @@ const TILE_SIZE = 32; // Size of each tile in pixels
 const MAP_WIDTH = 80;  // Actual map width
 const MAP_HEIGHT = 50; // Actual map height
 const FOV_RADIUS = 6; // How far the player can see
+const ANIMATION_SPEED = 200; // Milliseconds per frame
 
 // Game class
 class GladelikeGame {
@@ -44,7 +45,7 @@ class GladelikeGame {
         
         // Track resource loading
         this.resourcesLoaded = 0;
-        this.totalResources = 3; // tiles.png, rogues.png, and monsters.png
+        this.totalResources = 4; // tiles.png, rogues.png, monsters.png, animated-tiles.png
         
         // Add basic monster stats
         this.monsterStats = {
@@ -88,6 +89,26 @@ class GladelikeGame {
             this.checkAllResourcesLoaded();
         };
         
+        // Initialize animated tiles
+        this.animatedTilesImage = new Image();
+        this.animatedTilesImage.src = 'animated-tiles.png';
+        this.animatedTilesImage.onload = () => {
+            this.animatedTilesLoaded = true;
+            this.resourcesLoaded++;
+            this.checkAllResourcesLoaded();
+        };
+        
+        // Track animated tiles and light sources
+        this.animatedTiles = [];
+        this.lightSources = [];
+        
+        // Animation timing
+        this.lastFrameTime = 0;
+        this.animationTimer = 0;
+        
+        // Start animation loop
+        requestAnimationFrame(this.animationLoop.bind(this));
+        
         // Define tile types and character types
         this.defineTileTypes();
         this.defineCharacterTypes();
@@ -122,8 +143,10 @@ class GladelikeGame {
     
     checkAllResourcesLoaded() {
         if (this.resourcesLoaded === this.totalResources) {
+            this.defineAnimatedTileTypes();
             this.generateMap();
             this.placeCharacters();
+            this.placeFirepits();  // Place firepits near spawn points
             this.placeMonsters();
             this.computeFOV();
             this.updateCamera();
@@ -881,26 +904,28 @@ class GladelikeGame {
     }
     
     goDownstairs() {
-        // Increment dungeon level
+        // Increment level counter
         this.currentLevel++;
         
-        // Reset FOV and explored tiles
-        this.visibleTiles = {};
-        this.exploredTiles = {};
-        
-        // Generate new floor
+        // Generate a new level
         this.generateMap();
         
-        // Place characters on the new floor
+        // Place player, NPCs, and add more variety with depth
         this.placeCharacters();
         
-        // Compute FOV for new position
+        // Place firepit near the spawn point
+        this.placeFirepits();
+        
+        // Place monsters with more variety at deeper levels
+        this.placeMonsters();
+        
+        // Calculate field of view for new level
         this.computeFOV();
         
-        // Update camera position to center on player
+        // Update camera for new player position
         this.updateCamera();
         
-        // Draw the map
+        // Draw the new level
         this.drawMap();
         
         // Update UI
@@ -1103,26 +1128,18 @@ class GladelikeGame {
     }
     
     computeFOV() {
-        // Reset visible tiles
-        this.visibleTiles = {};
-        
         if (!this.player) return;
         
-        // Create FOV calculator using Precise Shadowcasting algorithm
+        // Clear previous FOV data
+        this.visibleTiles = {};
+        
+        // Calculate player's field of view
         const fov = new ROT.FOV.PreciseShadowcasting((x, y) => {
-            // Return 0 for walls (completely blocking) or 1 for non-walls (completely transparent)
-            if (x < 0 || y < 0 || x >= MAP_WIDTH || y >= MAP_HEIGHT) return 0;
-            
-            const tile = this.map[y][x];
-            if (!tile || this.isWallTile(tile.type)) return 0;
-            
-            // Check if the tile has an impassable feature
-            if (tile.feature && ['tree', 'smallTree'].includes(tile.feature)) return 0.3; // Partially transparent
-            
-            return 1; // Fully transparent
+            return this.isValidMove(x, y) || 
+                   (x >= 0 && y >= 0 && x < MAP_WIDTH && y < MAP_HEIGHT && this.map[y][x] === 'door');
         });
         
-        // Compute FOV from player position
+        // Process player's FOV
         fov.compute(this.player.x, this.player.y, FOV_RADIUS, (x, y, r, visibility) => {
             // Mark tile as visible with a visibility value based on distance
             const key = `${x},${y}`;
@@ -1142,14 +1159,134 @@ class GladelikeGame {
             // Also mark as explored with an even lower visibility
             this.exploredTiles[key] = Math.max(0.05, visibilityValue * 0.15); // Much darker for explored areas
         });
+        
+        // Process light sources FOV
+        for (const light of this.lightSources) {
+            // Use diagonal light pattern instead of circular
+            this.computeLightSourceFOV(light);
+        }
     }
     
-    isTileVisible(x, y) {
-        return this.visibleTiles[`${x},${y}`] !== undefined;
+    // Compute FOV for a light source with diagonal preference
+    computeLightSourceFOV(light) {
+        if (!light) return;
+        
+        const fov = new ROT.FOV.PreciseShadowcasting((x, y) => {
+            return this.isValidMove(x, y) || 
+                   (x >= 0 && y >= 0 && x < MAP_WIDTH && y < MAP_HEIGHT && this.map[y][x] === 'door');
+        });
+        
+        // Process light source FOV
+        fov.compute(light.x, light.y, light.radius, (x, y, r, visibility) => {
+            // Skip positions outside the map
+            if (x < 0 || y < 0 || x >= MAP_WIDTH || y >= MAP_HEIGHT) return;
+            
+            const key = `${x},${y}`;
+            
+            // Calculate distance (with diagonal preference)
+            const dx = Math.abs(x - light.x);
+            const dy = Math.abs(y - light.y);
+            // Use a modified Manhattan distance to prefer diagonals
+            // Normal Manhattan: dx + dy
+            // Normal Euclidean: Math.sqrt(dx*dx + dy*dy)
+            // Our custom: Combines both with a bias toward diagonal
+            const distance = Math.sqrt(dx*dx + dy*dy) * 0.7 + (dx + dy) * 0.3;
+            
+            // Calculate visibility with flicker
+            const normalizedDistance = Math.min(distance / light.radius, 1);
+            // Exponential falloff
+            const baseVisibility = Math.pow(1 - normalizedDistance, 2);
+            // Apply current flicker intensity
+            const flickeredVisibility = baseVisibility * light.currentIntensity;
+            
+            // Only update if the tile is already explored (avoid revealing new areas)
+            if (this.exploredTiles[key] !== undefined) {
+                // Apply a warm orange tint to fire-lit areas
+                const existingVisibility = this.visibleTiles[key] || 0;
+                // Take the maximum of player visibility and light source visibility
+                this.visibleTiles[key] = Math.max(existingVisibility, flickeredVisibility);
+            }
+        });
     }
     
-    isTileExplored(x, y) {
-        return this.exploredTiles[`${x},${y}`] !== undefined;
+    // Place firepits near spawn points
+    placeFirepits() {
+        // Clear existing animated tiles and light sources
+        this.animatedTiles = [];
+        this.lightSources = [];
+        
+        // We need a player character to place firepits
+        if (!this.player) return;
+        
+        // Find valid floor tiles around the player spawn point
+        const candidatePositions = [];
+        const spawnX = this.player.x;
+        const spawnY = this.player.y;
+        
+        // Check positions in a radius of 2 around spawn
+        for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+                // Skip the player's position and diagonal positions
+                if ((dx === 0 && dy === 0) || (Math.abs(dx) === Math.abs(dy) && Math.abs(dx) === 2)) continue;
+                
+                const x = spawnX + dx;
+                const y = spawnY + dy;
+                
+                // Make sure position is valid and is a floor tile
+                if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT && 
+                    this.isValidMove(x, y) && 
+                    !this.npcs.some(npc => npc.x === x && npc.y === y) &&
+                    !this.monsters.some(monster => monster.x === x && monster.y === y)) {
+                    
+                    candidatePositions.push({x, y});
+                }
+            }
+        }
+        
+        // If we have valid positions, place a firepit at one of them
+        if (candidatePositions.length > 0) {
+            const position = candidatePositions[Math.floor(Math.random() * candidatePositions.length)];
+            
+            // Create the firepit
+            const firepit = {
+                x: position.x,
+                y: position.y,
+                type: 'firepit',
+                animationStartTime: Date.now() + Math.random() * ANIMATION_SPEED // Offset start time for variety
+            };
+            
+            // Add to animated tiles
+            this.animatedTiles.push(firepit);
+            
+            // Create light source
+            const lightSource = {
+                x: position.x,
+                y: position.y,
+                type: 'firepit',
+                baseIntensity: this.animatedTileTypes.firepit.lightIntensity,
+                currentIntensity: this.animatedTileTypes.firepit.lightIntensity,
+                radius: this.animatedTileTypes.firepit.lightRadius
+            };
+            
+            // Add to light sources
+            this.lightSources.push(lightSource);
+            
+            console.log(`Placed firepit at ${position.x}, ${position.y}`);
+        }
+    }
+    
+    // Get current animation frame for an animated tile
+    getAnimationFrame(animatedTile) {
+        const tileType = this.animatedTileTypes[animatedTile.type];
+        if (!tileType) return null;
+        
+        // Calculate frame based on animation timer
+        const frameCount = tileType.frames.length;
+        const totalDuration = frameCount * tileType.frameDuration;
+        const normalizedTime = (this.animationTimer % totalDuration) / totalDuration;
+        const frameIndex = Math.floor(normalizedTime * frameCount);
+        
+        return tileType.frames[frameIndex];
     }
     
     // Convert map coordinates to screen coordinates based on camera position
@@ -1170,78 +1307,75 @@ class GladelikeGame {
     }
     
     drawMap() {
-        if (!this.tilesetLoaded || !this.roguesLoaded || !this.monstersLoaded) return;
+        if (!this.tilesetLoaded || !this.roguesLoaded || !this.monstersLoaded || !this.animatedTilesLoaded) return;
         
         // Clear the canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        // Calculate viewport boundaries
-        const startX = this.camera.x;
-        const endX = Math.min(this.camera.x + this.viewportWidth, MAP_WIDTH);
-        const startY = this.camera.y;
-        const endY = Math.min(this.camera.y + this.viewportHeight, MAP_HEIGHT);
-        
-        // Draw only the tiles that are within the viewport
-        for (let y = startY; y < endY; y++) {
-            if (y < 0 || y >= MAP_HEIGHT) continue;
-            
-            for (let x = startX; x < endX; x++) {
-                if (x < 0 || x >= MAP_WIDTH) continue;
+        // Draw the map
+        for (let vy = 0; vy < this.viewportHeight; vy++) {
+            for (let vx = 0; vx < this.viewportWidth; vx++) {
+                const x = this.camera.x + vx;
+                const y = this.camera.y + vy;
                 
-                const tile = this.map[y][x];
-                if (tile) {
-                    const isVisible = this.isTileVisible(x, y);
-                    const isExplored = this.isTileExplored(x, y);
+                // Skip if outside map boundaries
+                if (x < 0 || y < 0 || x >= MAP_WIDTH || y >= MAP_HEIGHT) continue;
+                
+                const tileX = vx * TILE_SIZE;
+                const tileY = vy * TILE_SIZE;
+                
+                const key = `${x},${y}`;
+                const visible = this.visibleTiles[key] !== undefined;
+                const explored = this.exploredTiles[key] !== undefined;
+                
+                if (visible || explored) {
+                    const alpha = visible ? this.visibleTiles[key] : this.exploredTiles[key];
+                    this.ctx.globalAlpha = alpha;
                     
-                    // Skip tiles that haven't been seen yet
-                    if (!isVisible && !isExplored) continue;
-                    
-                    // Calculate screen position
-                    const screenX = this.mapToScreenX(x);
-                    const screenY = this.mapToScreenY(y);
-                    
-                    // Draw the base tile
-                    const [tileY, tileX] = this.tiles[tile.type];
-                    
-                    // Set appropriate alpha based on visibility
-                    if (isVisible) {
-                        this.ctx.globalAlpha = this.visibleTiles[`${x},${y}`];
-                    } else {
-                        this.ctx.globalAlpha = this.exploredTiles[`${x},${y}`];
-                    }
-                    
-                    this.ctx.drawImage(
-                        this.tilesetImage,
-                        tileX * TILE_SIZE, tileY * TILE_SIZE, TILE_SIZE, TILE_SIZE, // Source rectangle
-                        screenX, screenY, TILE_SIZE, TILE_SIZE // Destination rectangle
-                    );
-                    
-                    // Draw feature if present
-                    if (tile.feature) {
-                        const [featureY, featureX] = this.tiles[tile.feature];
+                    // Draw floor/wall/etc.
+                    const tile = this.map[y][x];
+                    if (tile) {
+                        // Draw the base tile
+                        const [tileY, tileX] = this.tiles[tile.type];
                         this.ctx.drawImage(
                             this.tilesetImage,
-                            featureX * TILE_SIZE, featureY * TILE_SIZE, TILE_SIZE, TILE_SIZE, // Source rectangle
-                            screenX, screenY, TILE_SIZE, TILE_SIZE // Destination rectangle
+                            tileX * TILE_SIZE, tileY * TILE_SIZE, TILE_SIZE, TILE_SIZE, // Source rectangle
+                            vx * TILE_SIZE, vy * TILE_SIZE, TILE_SIZE, TILE_SIZE // Destination rectangle
                         );
+                        
+                        // Draw feature if present
+                        if (tile.feature) {
+                            const [featureY, featureX] = this.tiles[tile.feature];
+                            this.ctx.drawImage(
+                                this.tilesetImage,
+                                featureX * TILE_SIZE, featureY * TILE_SIZE, TILE_SIZE, TILE_SIZE, // Source rectangle
+                                vx * TILE_SIZE, vy * TILE_SIZE, TILE_SIZE, TILE_SIZE // Destination rectangle
+                            );
+                        }
                     }
                 }
             }
         }
         
+        // Draw animated tiles on top
+        this.drawAnimatedTiles();
+        
         // Draw NPCs (only if visible and on screen)
         for (const npc of this.npcs) {
-            if (this.isTileVisible(npc.x, npc.y) && this.isOnScreen(npc.x, npc.y)) {
-                const screenX = this.mapToScreenX(npc.x);
-                const screenY = this.mapToScreenY(npc.y);
-                
-                this.ctx.globalAlpha = 1.0;
-                const [charY, charX] = this.characters[npc.type];
-                this.ctx.drawImage(
-                    this.roguesImage,
-                    charX * TILE_SIZE, charY * TILE_SIZE, TILE_SIZE, TILE_SIZE, // Source rectangle
-                    screenX, screenY, TILE_SIZE, TILE_SIZE // Destination rectangle
-                );
+            if (this.isOnScreen(npc.x, npc.y)) {
+                const key = `${npc.x},${npc.y}`;
+                if (this.visibleTiles[key] !== undefined) {
+                    const screenX = this.mapToScreenX(npc.x);
+                    const screenY = this.mapToScreenY(npc.y);
+                    
+                    this.ctx.globalAlpha = this.visibleTiles[key];
+                    const [charY, charX] = this.characters[npc.type];
+                    this.ctx.drawImage(
+                        this.roguesImage,
+                        charX * TILE_SIZE, charY * TILE_SIZE, TILE_SIZE, TILE_SIZE, // Source rectangle
+                        screenX, screenY, TILE_SIZE, TILE_SIZE // Destination rectangle
+                    );
+                }
             }
         }
         
@@ -1261,22 +1395,61 @@ class GladelikeGame {
         
         // Draw monsters (only if visible and on screen)
         for (const monster of this.monsters) {
-            if (this.isTileVisible(monster.x, monster.y) && this.isOnScreen(monster.x, monster.y)) {
-                const screenX = this.mapToScreenX(monster.x);
-                const screenY = this.mapToScreenY(monster.y);
-                
-                this.ctx.globalAlpha = this.visibleTiles[`${monster.x},${monster.y}`];
-                const [monsterY, monsterX] = this.monsterTypes[monster.type];
-                this.ctx.drawImage(
-                    this.monstersImage,
-                    monsterX * TILE_SIZE, monsterY * TILE_SIZE, TILE_SIZE, TILE_SIZE,
-                    screenX, screenY, TILE_SIZE, TILE_SIZE
-                );
+            if (this.isOnScreen(monster.x, monster.y)) {
+                const key = `${monster.x},${monster.y}`;
+                if (this.visibleTiles[key] !== undefined) {
+                    const screenX = this.mapToScreenX(monster.x);
+                    const screenY = this.mapToScreenY(monster.y);
+                    
+                    this.ctx.globalAlpha = this.visibleTiles[key];
+                    const [monsterY, monsterX] = this.monsterTypes[monster.type];
+                    this.ctx.drawImage(
+                        this.monstersImage,
+                        monsterX * TILE_SIZE, monsterY * TILE_SIZE, TILE_SIZE, TILE_SIZE,
+                        screenX, screenY, TILE_SIZE, TILE_SIZE
+                    );
+                }
             }
         }
         
         // Reset global alpha
         this.ctx.globalAlpha = 1.0;
+    }
+    
+    // Draw animated tiles
+    drawAnimatedTiles() {
+        for (const animatedTile of this.animatedTiles) {
+            // Skip if not on screen
+            if (!this.isOnScreen(animatedTile.x, animatedTile.y)) continue;
+            
+            // Skip if not visible
+            const key = `${animatedTile.x},${animatedTile.y}`;
+            if (this.visibleTiles[key] === undefined && this.exploredTiles[key] === undefined) continue;
+            
+            const frame = this.getAnimationFrame(animatedTile);
+            if (!frame) continue;
+            
+            // Calculate screen coordinates
+            const screenX = this.mapToScreenX(animatedTile.x);
+            const screenY = this.mapToScreenY(animatedTile.y);
+            
+            // Set alpha based on visibility
+            const alpha = this.visibleTiles[key] || this.exploredTiles[key] || 0;
+            this.ctx.globalAlpha = alpha;
+            
+            // Draw the animated tile
+            this.ctx.drawImage(
+                this.animatedTilesImage,
+                frame.x * TILE_SIZE,
+                frame.y * TILE_SIZE,
+                TILE_SIZE,
+                TILE_SIZE,
+                screenX,
+                screenY,
+                TILE_SIZE,
+                TILE_SIZE
+            );
+        }
     }
 
     // Add combat methods
@@ -1350,6 +1523,74 @@ class GladelikeGame {
         }
         
         requestAnimationFrame(shake);
+    }
+
+    // Add animation loop for animated tiles
+    animationLoop(timestamp) {
+        // Calculate time delta
+        if (!this.lastFrameTime) {
+            this.lastFrameTime = timestamp;
+        }
+        const deltaTime = timestamp - this.lastFrameTime;
+        this.lastFrameTime = timestamp;
+        
+        // Update animation timer
+        this.animationTimer += deltaTime;
+        
+        // Request next frame
+        requestAnimationFrame(this.animationLoop.bind(this));
+        
+        // Only redraw if we have animated tiles and the game is initialized
+        if (this.animatedTiles.length > 0 && this.player) {
+            // Update light flickering
+            this.updateLightFlicker();
+            
+            // Redraw the map to show animations
+            this.drawMap();
+        }
+    }
+    
+    // Update light flickering for light sources
+    updateLightFlicker() {
+        // Update all light sources with flickering
+        for (const light of this.lightSources) {
+            if (light.type === 'firepit') {
+                // Calculate new flicker value - between 0.8 and 1.2 of base intensity
+                light.currentIntensity = light.baseIntensity * (0.8 + Math.random() * 0.4);
+            }
+        }
+        
+        // Update FOV with new light values
+        this.computeFOV();
+    }
+    
+    // Define animation frames for different animated tile types
+    defineAnimatedTileTypes() {
+        // Frame coordinates for fire pit animation (row 4 in animated-tiles.png)
+        this.animatedTileTypes = {
+            firepit: {
+                frames: [
+                    { x: 0, y: 3 },  // First frame (0-indexed y=3 for row 4)
+                    { x: 1, y: 3 },  // Second frame
+                    { x: 2, y: 3 },  // Third frame
+                    { x: 3, y: 3 },  // Fourth frame
+                    { x: 4, y: 3 },  // Fifth frame
+                    { x: 5, y: 3 }   // Sixth frame
+                ],
+                frameDuration: ANIMATION_SPEED, // Duration of each frame in ms
+                lightRadius: 3,      // Light radius in tiles
+                lightIntensity: 1.0  // Base light intensity
+            }
+        };
+    }
+
+    // Helper methods for checking tile visibility
+    isTileVisible(x, y) {
+        return this.visibleTiles[`${x},${y}`] !== undefined;
+    }
+    
+    isTileExplored(x, y) {
+        return this.exploredTiles[`${x},${y}`] !== undefined;
     }
 }
 
