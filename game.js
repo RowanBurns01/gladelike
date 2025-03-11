@@ -4,7 +4,7 @@
 const TILE_SIZE = 32; // Size of each tile in pixels
 const MAP_WIDTH = 80;  // Actual map width
 const MAP_HEIGHT = 50; // Actual map height
-const FOV_RADIUS = 3; // How far the player can see
+const FOV_RADIUS = 6; // How far the player can see
 
 // Game class
 class GladelikeGame {
@@ -158,6 +158,87 @@ class GladelikeGame {
                     this.updateCamera();
                     this.drawMap();
                     this.updateUI();
+                }
+            }
+        });
+
+        // Set up key repeat for continuous movement
+        let keyRepeatInterval = null;
+        let keyRepeatTimeout = null;
+        let lastKey = null;
+
+        window.addEventListener('keydown', (e) => {
+            if (!this.player) return;
+            
+            // Only handle arrow keys
+            if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                return;
+            }
+            
+            // If it's a new key, start the repeat sequence
+            if (lastKey !== e.key) {
+                lastKey = e.key;
+                
+                // Clear any existing intervals
+                if (keyRepeatInterval) {
+                    clearInterval(keyRepeatInterval);
+                }
+                if (keyRepeatTimeout) {
+                    clearTimeout(keyRepeatTimeout);
+                }
+                
+                // Initial delay before starting repeat (reduced from 500ms to 300ms)
+                keyRepeatTimeout = setTimeout(() => {
+                    keyRepeatInterval = setInterval(() => {
+                        let newX = this.player.x;
+                        let newY = this.player.y;
+                        
+                        switch (e.key) {
+                            case 'ArrowUp':
+                                newY--;
+                                break;
+                            case 'ArrowDown':
+                                newY++;
+                                break;
+                            case 'ArrowLeft':
+                                newX--;
+                                break;
+                            case 'ArrowRight':
+                                newX++;
+                                break;
+                        }
+                        
+                        if (this.isValidMove(newX, newY)) {
+                            const tile = this.map[newY][newX];
+                            const hasStairs = tile && tile.feature === 'stairsDown';
+                            
+                            this.player.x = newX;
+                            this.player.y = newY;
+                            
+                            if (hasStairs) {
+                                this.goDownstairs();
+                            } else {
+                                this.computeFOV();
+                                this.updateCamera();
+                                this.drawMap();
+                                this.updateUI();
+                            }
+                        }
+                    }, 50); // Repeat every 50ms
+                }, 300); // Reduced from 500ms to 300ms
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.key === lastKey) {
+                lastKey = null;
+                if (keyRepeatInterval) {
+                    clearInterval(keyRepeatInterval);
+                    keyRepeatInterval = null;
+                }
+                if (keyRepeatTimeout) {
+                    clearTimeout(keyRepeatTimeout);
+                    keyRepeatTimeout = null;
                 }
             }
         });
@@ -768,21 +849,32 @@ class GladelikeGame {
         
         // Compute FOV from player position
         fov.compute(this.player.x, this.player.y, FOV_RADIUS, (x, y, r, visibility) => {
-            // Mark tile as visible
+            // Mark tile as visible with a visibility value based on distance
             const key = `${x},${y}`;
-            this.visibleTiles[key] = true;
+            // Calculate distance from player
+            const dx = x - this.player.x;
+            const dy = y - this.player.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
             
-            // Also mark as explored
-            this.exploredTiles[key] = true;
+            // Calculate visibility based on distance (closer = brighter)
+            const maxDistance = FOV_RADIUS;
+            const normalizedDistance = Math.min(distance / maxDistance, 1);
+            // More dramatic falloff: cubic for even sharper darkness at edges
+            const visibilityValue = Math.pow(1 - (normalizedDistance * 0.6), 3); // Brighter near player, sharper falloff
+            
+            this.visibleTiles[key] = Math.min(1, visibilityValue * 1.5); // Boost visibility in FOV
+            
+            // Also mark as explored with an even lower visibility
+            this.exploredTiles[key] = Math.max(0.05, visibilityValue * 0.15); // Much darker for explored areas
         });
     }
     
     isTileVisible(x, y) {
-        return this.visibleTiles[`${x},${y}`] === true;
+        return this.visibleTiles[`${x},${y}`] !== undefined;
     }
     
     isTileExplored(x, y) {
-        return this.exploredTiles[`${x},${y}`] === true;
+        return this.exploredTiles[`${x},${y}`] !== undefined;
     }
     
     // Convert map coordinates to screen coordinates based on camera position
@@ -838,9 +930,9 @@ class GladelikeGame {
                     
                     // Set appropriate alpha based on visibility
                     if (isVisible) {
-                        this.ctx.globalAlpha = 1.0; // Fully visible
+                        this.ctx.globalAlpha = this.visibleTiles[`${x},${y}`];
                     } else {
-                        this.ctx.globalAlpha = 0.5; // Dimmed for explored but not visible
+                        this.ctx.globalAlpha = this.exploredTiles[`${x},${y}`];
                     }
                     
                     this.ctx.drawImage(
