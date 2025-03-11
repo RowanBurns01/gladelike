@@ -5,14 +5,18 @@ const TILE_SIZE = 32; // Size of each tile in pixels
 const MAP_WIDTH = 80;  // Actual map width
 const MAP_HEIGHT = 50; // Actual map height
 const FOV_RADIUS = 6; // How far the player can see
-const ANIMATION_SPEED = 200; // Milliseconds per frame
+const ANIMATION_SPEED = 400; // Milliseconds per frame - slower for more natural fire animation
 const BASE_MONSTERS = 6; // Base number of monsters per level
+const MAX_LEVELS = 5; // Maximum number of levels in the game
 
 // Game class
 class GladelikeGame {
     constructor() {
         this.canvas = document.getElementById('game-canvas');
         this.ctx = this.canvas.getContext('2d');
+        
+        // Add isDead flag
+        this.isDead = false;
         
         // Viewport dimensions (in tiles)
         this.viewportWidth = 0;
@@ -175,7 +179,7 @@ class GladelikeGame {
         
         // Key down event
         window.addEventListener('keydown', (e) => {
-            if (!this.player) return;
+            if (!this.player || this.isDead) return;
             
             // Store key state
             keys[e.key] = true;
@@ -192,7 +196,7 @@ class GladelikeGame {
     }
     
     processMovement(keys) {
-        if (!this.player) return;
+        if (!this.player || this.isDead) return;  // Don't process movement if dead
         
         let dx = 0;
         let dy = 0;
@@ -248,6 +252,12 @@ class GladelikeGame {
             const tile = this.map[newY][newX];
             if (tile && tile.feature === 'stairsDown') {
                 this.goDownstairs();
+                return;
+            }
+            
+            // Check if new position has the victory door (on the final level)
+            if (tile && tile.feature === 'door' && this.currentLevel === MAX_LEVELS) {
+                this.playerWon();
                 return;
             }
             
@@ -465,8 +475,8 @@ class GladelikeGame {
             effectiveHeight = Math.floor(MAP_HEIGHT * 0.6);
             marginX = Math.floor((MAP_WIDTH - effectiveWidth) / 2);
             marginY = Math.floor((MAP_HEIGHT - effectiveHeight) / 2);
-        } else if (this.currentLevel <= 6) {
-            // Levels 4-6 are medium sized (80% of full size)
+        } else {
+            // Levels 4-5 are medium sized (80% of full size)
             effectiveWidth = Math.floor(MAP_WIDTH * 0.8);
             effectiveHeight = Math.floor(MAP_HEIGHT * 0.8);
             marginX = Math.floor((MAP_WIDTH - effectiveWidth) / 2);
@@ -490,19 +500,42 @@ class GladelikeGame {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 // Initialize with walls
                 tempMap[y][x] = 1;
-                this.map[y][x] = { type: 'wallStoneTop' };
+                
+                // Set wall types based on level theme
+                let wallType;
+                switch (this.currentLevel) {
+                    case 1: wallType = 'wallDirtTop'; break;     // Level 1: Dirt/Cave theme
+                    case 2: wallType = 'wallStoneTop'; break;    // Level 2: Stone theme
+                    case 3: wallType = 'wallBrickTop'; break;    // Level 3: Brick theme
+                    case 4: wallType = 'wallStoneSide'; break;   // Level 4: Stone side walls
+                    case 5: wallType = 'wallBrickSide1'; break;  // Level 5: Brick side walls
+                    default: wallType = 'wallStoneTop';
+                }
+                
+                this.map[y][x] = { type: wallType };
             }
         }
         
         // Let the generator fill our map using a callback
         generator.create((x, y, value) => {
             // Only process cells within the effective area
-            if (this.currentLevel <= 6 && 
-                (x < marginX || x >= marginX + effectiveWidth || 
-                 y < marginY || y >= marginY + effectiveHeight)) {
+            if (x < marginX || x >= marginX + effectiveWidth || 
+                y < marginY || y >= marginY + effectiveHeight) {
                 // Outside effective area - keep as wall
                 tempMap[y][x] = 1;
-                this.map[y][x] = { type: 'wallStoneTop' };
+                
+                // Set wall types based on level theme
+                let wallType;
+                switch (this.currentLevel) {
+                    case 1: wallType = 'wallDirtTop'; break;     // Level 1: Dirt/Cave theme
+                    case 2: wallType = 'wallStoneTop'; break;    // Level 2: Stone theme
+                    case 3: wallType = 'wallBrickTop'; break;    // Level 3: Brick theme
+                    case 4: wallType = 'wallStoneSide'; break;   // Level 4: Stone side walls
+                    case 5: wallType = 'wallBrickSide1'; break;  // Level 5: Brick side walls
+                    default: wallType = 'wallStoneTop';
+                }
+                
+                this.map[y][x] = { type: wallType };
             } else {
                 // Within effective area - use generated value
                 // value = 1 for floor, 0 for wall in ROT.js
@@ -510,10 +543,42 @@ class GladelikeGame {
                 tempMap[y][x] = isWall ? 1 : 0;
                 
                 if (isWall) {
-                    this.map[y][x] = { type: 'wallStoneTop' };
+                    // Set wall types based on level theme
+                    let wallType;
+                    switch (this.currentLevel) {
+                        case 1: wallType = 'wallDirtTop'; break;     // Level 1: Dirt/Cave theme
+                        case 2: wallType = 'wallStoneTop'; break;    // Level 2: Stone theme
+                        case 3: wallType = 'wallBrickTop'; break;    // Level 3: Brick theme
+                        case 4: wallType = 'wallStoneSide'; break;   // Level 4: Stone side walls
+                        case 5: wallType = 'wallBrickSide1'; break;  // Level 5: Brick side walls
+                        default: wallType = 'wallStoneTop';
+                    }
+                    
+                    this.map[y][x] = { type: wallType };
                 } else {
-                    // Determine floor type
-                    const floorType = (Math.random() < 0.85) ? 'floorStone1' : 'floorStone2';
+                    // Set floor types based on level theme
+                    let floorTypes;
+                    switch (this.currentLevel) {
+                        case 1: 
+                            floorTypes = ['floorDirt1', 'floorDirt2', 'floorDirt3']; 
+                            break;
+                        case 2: 
+                            floorTypes = ['floorStone1', 'floorStone2']; 
+                            break;
+                        case 3: 
+                            floorTypes = ['floorStone2', 'floorStone3']; 
+                            break;
+                        case 4: 
+                            floorTypes = ['floorGrass1', 'floorGrass2']; 
+                            break;
+                        case 5: 
+                            floorTypes = ['floorStone3', 'floorDark']; 
+                            break;
+                        default: 
+                            floorTypes = ['floorStone1', 'floorStone2'];
+                    }
+                    
+                    const floorType = floorTypes[Math.floor(Math.random() * floorTypes.length)];
                     this.map[y][x] = { type: floorType };
                 }
             }
@@ -541,14 +606,30 @@ class GladelikeGame {
                 // If not in largest region and not a wall, convert to wall
                 if (tempMap[y][x] === 0 && !largestRegion.some(pos => pos.x === x && pos.y === y)) {
                     tempMap[y][x] = 1;
-                    this.map[y][x] = { type: 'wallStoneTop' };
+                    
+                    // Set wall types based on level theme
+                    let wallType;
+                    switch (this.currentLevel) {
+                        case 1: wallType = 'wallDirtTop'; break;     // Level 1: Dirt/Cave theme
+                        case 2: wallType = 'wallStoneTop'; break;    // Level 2: Stone theme
+                        case 3: wallType = 'wallBrickTop'; break;    // Level 3: Brick theme
+                        case 4: wallType = 'wallStoneSide'; break;   // Level 4: Stone side walls
+                        case 5: wallType = 'wallBrickSide1'; break;  // Level 5: Brick side walls
+                        default: wallType = 'wallStoneTop';
+                    }
+                    
+                    this.map[y][x] = { type: wallType };
                 }
             }
         }
         
-        // Add stairs down - always 1 per level
-        // Stairs are added to a random position in the largest connected region
-        this.placeFeatureOnEmptyFloor('stairsDown');
+        // Add stairs down on levels 1-4, or victory door on level 5
+        if (this.currentLevel < MAX_LEVELS) {
+            this.placeFeatureOnEmptyFloor('stairsDown');
+        } else {
+            // On the final level, place a victory door instead of stairs
+            this.placeFeatureOnEmptyFloor('door');
+        }
     }
     
     findConnectedRegions(tempMap) {
@@ -669,28 +750,45 @@ class GladelikeGame {
         // Empty the NPCs array
         this.npcs = [];
         
-        // Characters to use for NPCs - adjust based on level
+        // Characters to use for NPCs - adjust based on level theme
         let npcTypes;
         
-        if (this.currentLevel <= 3) {
-            // Upper levels - mostly civilians
-            npcTypes = [
-                'peasant1', 'peasant2', 'farmer1', 'farmer2', 'farmer3',
-                'baker', 'blacksmith', 'scholar', 'elderlyWoman', 'elderlyMan',
-                'shopkeep', 'monk', 'priest'
-            ];
-        } else if (this.currentLevel <= 6) {
-            // Middle levels - more adventurers
-            npcTypes = [
-                'dwarf', 'elf', 'ranger', 'knight', 'maleFighter', 'femaleKnight',
-                'monk', 'priest', 'swordsman', 'fencer'
-            ];
-        } else {
-            // Deep levels - tougher characters
-            npcTypes = [
-                'maleBarbarian', 'femaleBarbarian', 'maleWizard', 'femaleWizard',
-                'warlock', 'templar', 'shieldKnight', 'druid', 'bandit'
-            ];
+        switch (this.currentLevel) {
+            case 1:
+                // Level 1: Simple village folk
+                npcTypes = [
+                    'peasant1', 'peasant2', 'farmer1', 'farmer2'
+                ];
+                break;
+            case 2:
+                // Level 2: Town folk
+                npcTypes = [
+                    'baker', 'blacksmith', 'scholar', 'elderlyWoman', 'elderlyMan'
+                ];
+                break;
+            case 3:
+                // Level 3: Adventurers
+                npcTypes = [
+                    'ranger', 'knight', 'maleFighter', 'femaleKnight'
+                ];
+                break;
+            case 4:
+                // Level 4: Combat specialists
+                npcTypes = [
+                    'monk', 'priest', 'swordsman', 'fencer'
+                ];
+                break;
+            case 5:
+                // Level 5: High-level adventurers
+                npcTypes = [
+                    'maleBarbarian', 'femaleBarbarian', 'maleWizard', 'femaleWizard',
+                    'warlock', 'templar'
+                ];
+                break;
+            default:
+                npcTypes = [
+                    'peasant1', 'monk', 'knight'
+                ];
         }
         
         // Place player character at the center of the map
@@ -733,9 +831,8 @@ class GladelikeGame {
             return;
         }
         
-        // Place NPCs (5-10 random characters)
-        // Add more NPCs as levels get deeper
-        const numNPCs = 5 + Math.floor(Math.random() * 6) + Math.floor(this.currentLevel / 2); 
+        // Place NPCs (fewer NPCs at deeper levels)
+        const numNPCs = Math.max(2, 7 - this.currentLevel);
         
         for (let i = 0; i < numNPCs; i++) {
             // Get available positions (no player, no other NPCs, valid move)
@@ -774,14 +871,26 @@ class GladelikeGame {
         // Number of monsters increases with depth
         const numMonsters = BASE_MONSTERS + Math.floor(this.currentLevel * 1.5);
         
-        // Different monster pools based on depth
+        // Different monster pools based on depth/level
         let monsterPool;
-        if (this.currentLevel <= 3) {
-            monsterPool = ['goblin', 'giantRat', 'smallMyconid'];
-        } else if (this.currentLevel <= 6) {
-            monsterPool = ['orc', 'goblinArcher', 'giantSpider', 'largeMyconid'];
-        } else {
-            monsterPool = ['orcBlademaster', 'orcWizard', 'skeleton', 'ghoul'];
+        switch (this.currentLevel) {
+            case 1:
+                monsterPool = ['goblin', 'giantRat'];
+                break;
+            case 2:
+                monsterPool = ['goblin', 'goblinArcher', 'smallMyconid'];
+                break;
+            case 3:
+                monsterPool = ['orc', 'goblinArcher', 'largeMyconid'];
+                break;
+            case 4:
+                monsterPool = ['orc', 'orcBlademaster', 'giantSpider'];
+                break;
+            case 5:
+                monsterPool = ['orcWizard', 'skeleton', 'ghoul'];
+                break;
+            default:
+                monsterPool = ['goblin', 'orc', 'skeleton'];
         }
         
         // Calculate monster density based on actual available floor space
@@ -812,7 +921,8 @@ class GladelikeGame {
                         !(this.player.x === x && this.player.y === y) &&
                         !this.npcs.some(npc => npc.x === x && npc.y === y) &&
                         !this.monsters.some(monster => monster.x === x && monster.y === y) &&
-                        !(this.map[y][x].feature === 'stairsDown')) {  // Don't block stairs with monsters
+                        !(this.map[y][x].feature === 'stairsDown') &&
+                        !(this.map[y][x].feature === 'door')) {  // Don't block stairs or victory door with monsters
                         availableSpots.push({x, y});
                     }
                 }
@@ -916,7 +1026,30 @@ class GladelikeGame {
     showLevelMessage() {
         // Add a temporary level transition message to the screen
         const message = document.createElement('div');
-        message.textContent = `Descending to level ${this.currentLevel}...`;
+        
+        // Different messages for each level to enhance theme
+        let levelMessage;
+        switch (this.currentLevel) {
+            case 1:
+                levelMessage = "The Caves - Level 1";
+                break;
+            case 2:
+                levelMessage = "The Tunnels - Level 2";
+                break;
+            case 3:
+                levelMessage = "The Catacombs - Level 3";
+                break;
+            case 4:
+                levelMessage = "The Overgrown Ruins - Level 4";
+                break;
+            case 5:
+                levelMessage = "The Ancient Temple - Level 5";
+                break;
+            default:
+                levelMessage = `Descending to level ${this.currentLevel}...`;
+        }
+        
+        message.textContent = levelMessage;
         message.style.position = 'absolute';
         message.style.top = '50%';
         message.style.left = '50%';
@@ -1072,6 +1205,9 @@ class GladelikeGame {
     
     // Handle player death
     playerDied() {
+        // Set the death flag
+        this.isDead = true;
+        
         // Create a death message overlay
         const gameContainer = document.getElementById('game-container');
         const deathMessage = document.createElement('div');
@@ -1542,8 +1678,8 @@ class GladelikeGame {
         // Update all light sources with flickering
         for (const light of this.lightSources) {
             if (light.type === 'firepit') {
-                // Calculate new flicker value - between 0.8 and 1.2 of base intensity
-                light.currentIntensity = light.baseIntensity * (0.8 + Math.random() * 0.4);
+                // Calculate new flicker value - between 0.9 and 1.1 of base intensity for more subtle flicker
+                light.currentIntensity = light.baseIntensity * (0.9 + Math.random() * 0.2);
             }
         }
         
@@ -1578,6 +1714,44 @@ class GladelikeGame {
     
     isTileExplored(x, y) {
         return this.exploredTiles[`${x},${y}`] !== undefined;
+    }
+
+    // Add victory method
+    playerWon() {
+        // Set the victory flag (reusing isDead to disable movement)
+        this.isDead = true;
+        
+        // Create a victory message overlay
+        const gameContainer = document.getElementById('game-container');
+        const victoryMessage = document.createElement('div');
+        victoryMessage.style.position = 'absolute';
+        victoryMessage.style.top = '50%';
+        victoryMessage.style.left = '50%';
+        victoryMessage.style.transform = 'translate(-50%, -50%)';
+        victoryMessage.style.color = 'gold';
+        victoryMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+        victoryMessage.style.padding = '20px';
+        victoryMessage.style.borderRadius = '10px';
+        victoryMessage.style.fontSize = '24px';
+        victoryMessage.style.fontWeight = 'bold';
+        victoryMessage.style.textAlign = 'center';
+        victoryMessage.style.zIndex = '1000';
+        victoryMessage.textContent = 'Congratulations! You have escaped the dungeon!';
+        
+        // Add a restart button
+        const restartButton = document.createElement('button');
+        restartButton.textContent = 'Play Again';
+        restartButton.style.marginTop = '15px';
+        restartButton.style.padding = '10px 20px';
+        restartButton.style.fontSize = '16px';
+        restartButton.style.cursor = 'pointer';
+        restartButton.onclick = () => {
+            location.reload(); // Simple restart by reloading the page
+        };
+        
+        victoryMessage.appendChild(document.createElement('br'));
+        victoryMessage.appendChild(restartButton);
+        gameContainer.appendChild(victoryMessage);
     }
 }
 
