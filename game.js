@@ -482,62 +482,73 @@ class GladelikeGame {
             generator.create();
         }
         
-        // Fill the map with walls and floors - apply the size constraints here
+        // Create a temporary map to store generated data
         let tempMap = new Array(MAP_HEIGHT);
         for (let y = 0; y < MAP_HEIGHT; y++) {
             tempMap[y] = new Array(MAP_WIDTH);
+            
             for (let x = 0; x < MAP_WIDTH; x++) {
-                // For smaller maps, put walls outside the effective area
-                if (this.currentLevel <= 6 && 
-                    (x < marginX || x >= marginX + effectiveWidth || 
-                     y < marginY || y >= marginY + effectiveHeight)) {
-                    tempMap[y][x] = 1; // Wall
-                    this.map[y][x] = { type: 'wall1' };
-                } else {
-                    // Normal map generation inside effective area
-                    const isWall = generator.get(x, y);
-                    tempMap[y][x] = isWall;
-                    
-                    if (isWall) {
-                        this.map[y][x] = { type: 'wall1' };
-                    } else {
-                        // Determine floor type
-                        const floorType = (Math.random() < 0.85) ? 'floor1' : 'floor2';
-                        this.map[y][x] = { type: floorType };
-                    }
-                }
+                // Initialize with walls
+                tempMap[y][x] = 1;
+                this.map[y][x] = { type: 'wall1' };
             }
         }
         
-        // Add trees (only on upper levels)
-        if (this.currentLevel <= 3) {
-            const numTrees = 4 - this.currentLevel; // Fewer trees as you go deeper
-            for (let i = 0; i < numTrees; i++) {
-                const validTiles = ['floorGrass1', 'floorGrass2', 'floorGrass3'];
-                this.placeFeatureOnSpecificFloor('tree', validTiles);
+        // Let the generator fill our map using a callback
+        generator.create((x, y, value) => {
+            // Only process cells within the effective area
+            if (this.currentLevel <= 6 && 
+                (x < marginX || x >= marginX + effectiveWidth || 
+                 y < marginY || y >= marginY + effectiveHeight)) {
+                // Outside effective area - keep as wall
+                tempMap[y][x] = 1;
+                this.map[y][x] = { type: 'wall1' };
+            } else {
+                // Within effective area - use generated value
+                // value = 1 for floor, 0 for wall in ROT.js
+                const isWall = value === 0;
+                tempMap[y][x] = isWall ? 1 : 0;
+                
+                if (isWall) {
+                    this.map[y][x] = { type: 'wall1' };
+                } else {
+                    // Determine floor type
+                    const floorType = (Math.random() < 0.85) ? 'floor1' : 'floor2';
+                    this.map[y][x] = { type: floorType };
+                }
+            }
+        });
+        
+        // Find all connected floor regions
+        const regions = this.findConnectedRegions(tempMap);
+        
+        // Sort regions by size (largest first)
+        regions.sort((a, b) => b.length - a.length);
+        
+        // Make sure there's at least one region
+        if (regions.length === 0) {
+            console.error("No floor regions found, regenerating map...");
+            return this.generateMap(); // Recursively try again
+        }
+        
+        // Keep only the largest region, fill others with walls
+        const largestRegion = regions[0];
+        
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            for (let x = 0; x < MAP_WIDTH; x++) {
+                const key = `${x},${y}`;
+                
+                // If not in largest region and not a wall, convert to wall
+                if (tempMap[y][x] === 0 && !largestRegion.some(pos => pos.x === x && pos.y === y)) {
+                    tempMap[y][x] = 1;
+                    this.map[y][x] = { type: 'wall1' };
+                }
             }
         }
         
         // Add stairs down - always 1 per level
         // Stairs are added to a random position in the largest connected region
         this.placeFeatureOnEmptyFloor('stairsDown');
-        
-        // Verify map has at least some floor tiles
-        let hasFloor = false;
-        for (let y = 0; y < MAP_HEIGHT; y++) {
-            for (let x = 0; x < MAP_WIDTH; x++) {
-                if (this.map[y][x] && !this.isWallTile(this.map[y][x].type)) {
-                    hasFloor = true;
-                    break;
-                }
-            }
-            if (hasFloor) break;
-        }
-        
-        // If no floor tiles were generated (very rare but possible), regenerate the map
-        if (!hasFloor) {
-            this.generateMap();
-        }
     }
     
     findConnectedRegions(tempMap) {
@@ -549,7 +560,7 @@ class GladelikeGame {
             for (let x = 0; x < MAP_WIDTH; x++) {
                 const key = `${x},${y}`;
                 
-                // Skip if already visited or if it's a wall
+                // Skip if already visited or if it's a wall (1)
                 if (visited.has(key) || tempMap[y][x] === 1) {
                     continue;
                 }
@@ -571,7 +582,7 @@ class GladelikeGame {
             const {x, y} = queue.shift();
             const key = `${x},${y}`;
             
-            // Skip if already visited or a wall
+            // Skip if already visited
             if (visited.has(key)) continue;
             
             // Add to visited set
@@ -591,7 +602,7 @@ class GladelikeGame {
                 const ny = neighbor.y;
                 const neighborKey = `${nx},${ny}`;
                 
-                // Skip if out of bounds, already visited, or a wall
+                // Skip if out of bounds, already visited, or a wall (1)
                 if (nx < 0 || ny < 0 || nx >= MAP_WIDTH || ny >= MAP_HEIGHT || 
                     visited.has(neighborKey) || tempMap[ny][nx] === 1) {
                     continue;
