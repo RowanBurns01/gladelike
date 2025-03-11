@@ -1298,11 +1298,13 @@ class GladelikeGame {
             
             this.visibleTiles[key] = Math.min(1, visibilityValue * 1.5); // Boost visibility in FOV
             
-            // Also mark as explored with an even lower visibility
-            this.exploredTiles[key] = Math.max(0.05, visibilityValue * 0.15); // Much darker for explored areas
+            // Also mark as explored with a much lower visibility
+            if (!this.exploredTiles[key]) {
+                this.exploredTiles[key] = 0;
+            }
         });
         
-        // Process light sources FOV
+        // Process light sources FOV - now independent of player's FOV
         for (const light of this.lightSources) {
             // Use diagonal light pattern instead of circular
             this.computeLightSourceFOV(light);
@@ -1328,10 +1330,6 @@ class GladelikeGame {
             // Calculate distance (with diagonal preference)
             const dx = Math.abs(x - light.x);
             const dy = Math.abs(y - light.y);
-            // Use a modified Manhattan distance to prefer diagonals
-            // Normal Manhattan: dx + dy
-            // Normal Euclidean: Math.sqrt(dx*dx + dy*dy)
-            // Our custom: Combines both with a bias toward diagonal
             const distance = Math.sqrt(dx*dx + dy*dy) * 0.7 + (dx + dy) * 0.3;
             
             // Calculate visibility with flicker
@@ -1341,13 +1339,12 @@ class GladelikeGame {
             // Apply current flicker intensity
             const flickeredVisibility = baseVisibility * light.currentIntensity;
             
-            // Only update if the tile is already explored (avoid revealing new areas)
-            if (this.exploredTiles[key] !== undefined) {
-                // Apply a warm orange tint to fire-lit areas
-                const existingVisibility = this.visibleTiles[key] || 0;
-                // Take the maximum of player visibility and light source visibility
-                this.visibleTiles[key] = Math.max(existingVisibility, flickeredVisibility);
-            }
+            // Always show tiles lit by firepit, even if not explored
+            this.exploredTiles[key] = Math.max(this.exploredTiles[key] || 0, flickeredVisibility * 0.3);
+            
+            // Update visibility
+            const existingVisibility = this.visibleTiles[key] || 0;
+            this.visibleTiles[key] = Math.max(existingVisibility, flickeredVisibility);
         });
     }
     
