@@ -18,6 +18,18 @@ class GladelikeGame {
         // Add isDead flag
         this.isDead = false;
         
+        // Add loading timeout
+        setTimeout(() => {
+            if (this.resourcesLoaded < this.totalResources) {
+                console.error("Resource loading timed out. Some assets may be missing.");
+                this.checkAllResourcesLoaded(); // Force initialization
+            }
+        }, 10000); // 10 second timeout
+        
+        // Add real-time monster movement tracking
+        this.lastMonsterMoveTime = 0;
+        this.monsterMoveInterval = 700; // milliseconds between monster moves (adjusted for better balance)
+        
         // Viewport dimensions (in tiles)
         this.viewportWidth = 0;
         this.viewportHeight = 0;
@@ -245,6 +257,12 @@ class GladelikeGame {
             
             // Remove monster if dead
             if (monster.health <= 0) {
+                // Clear any existing combat timeouts for this monster
+                const monsterKey = `${monster.x},${monster.y}`;
+                if (this.recentlyAttacked.has(monsterKey)) {
+                    clearTimeout(this.recentlyAttacked.get(monsterKey));
+                    this.recentlyAttacked.delete(monsterKey);
+                }
                 this.monsters = this.monsters.filter(m => m !== monster);
             }
             
@@ -274,9 +292,6 @@ class GladelikeGame {
             
             // Update camera position
             this.updateCamera();
-            
-            // Move monsters
-            this.moveMonsters();
             
             // Compute field of view
             this.computeFOV();
@@ -956,8 +971,8 @@ class GladelikeGame {
         if (!this.player) return;
         
         this.monsters.forEach(monster => {
-            // Only move occasionally - could tie to a turn system later
-            if (Math.random() < 0.8) return; // 80% chance to not move
+            // For real-time movement, we now use the interval timer instead of random chance
+            // So every monster will attempt to move each time this is called
             
             // Choose a random direction
             const directions = [
@@ -967,7 +982,28 @@ class GladelikeGame {
                 {x: 0, y: 1}
             ];
             
-            const direction = directions[Math.floor(Math.random() * directions.length)];
+            // Basic AI: Move towards player if nearby, otherwise move randomly
+            let direction;
+            const distanceToPlayer = Math.abs(monster.x - this.player.x) + Math.abs(monster.y - this.player.y);
+            
+            // If player is nearby (within 5 tiles), try to move towards them
+            if (distanceToPlayer < 5) {
+                // Simple pathfinding: move in the direction that brings us closer to player
+                const dx = this.player.x > monster.x ? 1 : (this.player.x < monster.x ? -1 : 0);
+                const dy = this.player.y > monster.y ? 1 : (this.player.y < monster.y ? -1 : 0);
+                
+                // Try horizontal or vertical movement with equal chance
+                direction = Math.random() < 0.5 && dx !== 0 ? {x: dx, y: 0} : {x: 0, y: dy !== 0 ? dy : 0};
+                
+                // If no preferred direction, use random movement
+                if (direction.x === 0 && direction.y === 0) {
+                    direction = directions[Math.floor(Math.random() * directions.length)];
+                }
+            } else {
+                // Random movement when player is far away
+                direction = directions[Math.floor(Math.random() * directions.length)];
+            }
+            
             const newX = monster.x + direction.x;
             const newY = monster.y + direction.y;
             
@@ -1191,7 +1227,13 @@ class GladelikeGame {
 
     // Add method to modify health
     modifyHealth(amount) {
-        this.currentHealth = Math.max(0, Math.min(this.maxHealth, this.currentHealth + amount));
+        // Ensure health stays within bounds
+        const newHealth = Math.max(0, Math.min(this.maxHealth, this.currentHealth + amount));
+        if (isNaN(newHealth)) {
+            console.error("Invalid health modification");
+            return;
+        }
+        this.currentHealth = newHealth;
         
         // Add red flash effect if taking damage
         if (amount < 0) {
@@ -1604,6 +1646,12 @@ class GladelikeGame {
 
     // Add combat methods
     performAttack(attacker, target) {
+        // Validate monster type if it's a monster attacking
+        if (attacker.type && !this.monsterStats[attacker.type]) {
+            console.error("Invalid monster type:", attacker.type);
+            return 0;
+        }
+
         // Calculate damage (random between min and max)
         const [minDamage, maxDamage] = Array.isArray(attacker.damage) ? attacker.damage : [1, attacker.damage];
         
@@ -1742,11 +1790,21 @@ class GladelikeGame {
         // Update animation timer
         this.animationTimer += deltaTime;
         
+        // Track if we need to redraw due to monster movement
+        let needsRedraw = false;
+        
+        // Check if it's time for monsters to move (only if game is initialized and player is alive)
+        if (this.player && !this.isDead && timestamp - this.lastMonsterMoveTime > this.monsterMoveInterval) {
+            this.moveMonsters();
+            this.lastMonsterMoveTime = timestamp;
+            needsRedraw = true;
+        }
+        
         // Request next frame
         requestAnimationFrame(this.animationLoop.bind(this));
         
-        // Only redraw if we have animated tiles and the game is initialized
-        if (this.animatedTiles.length > 0 && this.player) {
+        // Only redraw if we have animated tiles, monsters moved, or the game is initialized
+        if ((this.animatedTiles.length > 0 || needsRedraw) && this.player) {
             // Update light flickering
             this.updateLightFlicker();
             
